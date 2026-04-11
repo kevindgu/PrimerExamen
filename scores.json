@@ -1,0 +1,283 @@
+{
+  "TYLER": {
+    "xp_total": 18992,
+    "sesiones": 11,
+    "total_respuestas": 69,
+    "total_correctas": 47,
+    "max_racha": 8,
+    "max_multiplicador": 4,
+    "mejor_pct": 100,
+    "mejor_sesion_xp": 6654,
+    "logros": [
+      "primera_vez",
+      "racha_5",
+      "xp_500",
+      "xp_2000",
+      "mult_x4",
+      "xp_10000",
+      "90_pct",
+      "100_pct"
+    ],
+    "historial": [
+      {
+        "fecha": "11/04/2026 17:09",
+        "materia": "Estudios Sociales",
+        "temas": "Estudios Sociales",
+        "dificultad": "Fácil",
+        "xp": 3129,
+        "correctas": 7,
+        "total": 9,
+        "pct": 77,
+        "racha": 5,
+        "mult": 4
+      },
+      {
+        "fecha": "11/04/2026 17:10",
+        "materia": "Ciencias",
+        "temas": "Ciencias",
+        "dificultad": "Fácil",
+        "xp": 2134,
+        "correctas": 5,
+        "total": 9,
+        "pct": 55,
+        "racha": 4,
+        "mult": 4
+      },
+      {
+        "fecha": "11/04/2026 17:15",
+        "materia": "Estudios Sociales",
+        "temas": "Estudios Sociales",
+        "dificultad": "Normal",
+        "xp": 6654,
+        "correctas": 13,
+        "total": 15,
+        "pct": 86,
+        "racha": 8,
+        "mult": 4
+      },
+      {
+        "fecha": "11/04/2026 17:17",
+        "materia": "Estudios Sociales",
+        "temas": "Estudios Sociales",
+        "dificultad": "Normal",
+        "xp": 312,
+        "correctas": 2,
+        "total": 4,
+        "pct": 50,
+        "racha": 1,
+        "mult": 2
+      },
+      {
+        "fecha": "11/04/2026 17:18",
+        "materia": "Español",
+        "temas": "Español",
+        "dificultad": "Normal",
+        "xp": 0,
+        "correctas": 0,
+        "total": 0,
+        "pct": 0,
+        "racha": 0,
+        "mult": 1
+      },
+      {
+        "fecha": "11/04/2026 17:23",
+        "materia": "Estudios Sociales",
+        "temas": "Estudios Sociales",
+        "dificultad": "Normal",
+        "xp": 5926,
+        "correctas": 16,
+        "total": 24,
+        "pct": 66,
+        "racha": 7,
+        "mult": 4
+      },
+      {
+        "fecha": "11/04/2026 17:26",
+        "materia": "Estudios Sociales",
+        "temas": "Estudios Sociales",
+        "dificultad": "Normal",
+        "xp": 146,
+        "correctas": 1,
+        "total": 3,
+        "pct": 33,
+        "racha": 1,
+        "mult": 2
+      },
+      {
+        "fecha": "11/04/2026 17:27",
+        "materia": "Ciencias",
+        "temas": "Ciencias",
+        "dificultad": "Normal",
+        "xp": 0,
+        "correctas": 0,
+        "total": 0,
+        "pct": 0,
+        "racha": 0,
+        "mult": 1
+      },
+      {
+        "fecha": "11/04/2026 17:27",
+        "materia": "Ciencias",
+        "temas": "Ciencias",
+        "dificultad": "Normal",
+        "xp": 0,
+        "correctas": 0,
+        "total": 1,
+        "pct": 0,
+        "racha": 0,
+        "mult": 1
+      },
+      {
+        "fecha": "11/04/2026 17:27",
+        "materia": "Ciencias",
+        "temas": "Ciencias",
+        "dificultad": "Normal",
+        "xp": 557,
+        "correctas": 2,
+        "total": 2,
+        "pct": 100,
+        "racha": 2,
+        "mult": 3
+      },
+      {
+        "fecha": "11/04/2026 17:44",
+        "materia": "Estudios Sociales",
+        "temas": "Estudios Sociales",
+        "dificultad": "☠️ Mega Difícil",
+        "xp": 134,
+        "correctas": 1,
+        "total": 2,
+        "pct": 50,
+        "racha": 1,
+        "mult": 2
+      }
+    ],
+    "por_dificultad": {
+      "Fácil": {
+        "xp_total": 5263,
+        "sesiones": 2,
+        "total_respuestas": 18,
+        "total_correctas": 12,
+        "mejor_sesion_xp": 3129,
+        "max_racha": 5
+      },
+      "Normal": {
+        "xp_total": 13595,
+        "sesiones": 8,
+        "total_respuestas": 49,
+        "total_correctas": 34,
+        "mejor_sesion_xp": 6654,
+        "max_racha": 8
+      },
+      "☠️ Mega Difícil": {
+        "xp_total": 134,
+        "sesiones": 1,
+        "total_respuestas": 2,
+        "total_correctas": 1,
+        "mejor_sesion_xp": 134,
+        "max_racha": 1
+      }
+    }
+  },
+  "ABBY": {
+    "xp_total": 0,
+    "sesiones": 1,
+    "total_respuestas": 0,
+    "total_correctas": 0,
+    "max_racha": 0,
+    "max_multiplicador": 1,
+    "mejor_pct": 0,
+    "mejor_sesion_xp": 0,
+    "logros": [
+      "primera_vez"
+    ],
+    "historial": [
+      {
+        "fecha": "11/04/2026 17:18",
+        "materia": "Ciencias",
+        "temas": "Ciencias",
+        "dificultad": "Normal",
+        "xp": 0,
+        "correctas": 0,
+        "total": 0,
+        "pct": 0,
+        "racha": 0,
+        "mult": 1
+      }
+    ],
+    "por_dificultad": {
+      "Normal": {
+        "xp_total": 0,
+        "sesiones": 1,
+        "total_respuestas": 0,
+        "total_correctas": 0,
+        "mejor_sesion_xp": 0,
+        "max_racha": 0
+      }
+    }
+  },
+  "JAIKEL": {
+    "xp_total": 7425,
+    "sesiones": 2,
+    "total_respuestas": 12,
+    "total_correctas": 12,
+    "max_racha": 12,
+    "max_multiplicador": 4,
+    "mejor_pct": 100,
+    "mejor_sesion_xp": 7425,
+    "logros": [
+      "primera_vez",
+      "racha_5",
+      "racha_10",
+      "xp_500",
+      "xp_2000",
+      "mult_x4",
+      "90_pct",
+      "100_pct"
+    ],
+    "historial": [
+      {
+        "fecha": "11/04/2026 17:32",
+        "materia": "Matemáticas",
+        "temas": "Matemáticas",
+        "dificultad": "Difícil",
+        "xp": 7425,
+        "correctas": 12,
+        "total": 12,
+        "pct": 100,
+        "racha": 12,
+        "mult": 4
+      },
+      {
+        "fecha": "11/04/2026 17:49",
+        "materia": "Matemáticas",
+        "temas": "Matemáticas",
+        "dificultad": "Normal",
+        "xp": 0,
+        "correctas": 0,
+        "total": 0,
+        "pct": 0,
+        "racha": 0,
+        "mult": 1
+      }
+    ],
+    "por_dificultad": {
+      "Difícil": {
+        "xp_total": 7425,
+        "sesiones": 1,
+        "total_respuestas": 12,
+        "total_correctas": 12,
+        "mejor_sesion_xp": 7425,
+        "max_racha": 12
+      },
+      "Normal": {
+        "xp_total": 0,
+        "sesiones": 1,
+        "total_respuestas": 0,
+        "total_correctas": 0,
+        "mejor_sesion_xp": 0,
+        "max_racha": 0
+      }
+    }
+  }
+}

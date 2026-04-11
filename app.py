@@ -1,0 +1,559 @@
+import streamlit as st
+import random
+import time
+from utils import ESTUDIANTES, DIFICULTADES, check_answer
+from scoring import new_score, record_answer, get_level, get_rank
+from infinite import InfiniteGenerator
+from leaderboard import save_session, get_ranking, get_ranking_dificultad, get_player, LOGROS, DIFICULTADES_ORDEN
+from musica import MUSIC_HTML
+
+st.set_page_config(page_title="🧮 MatePlay", page_icon="🧮", layout="centered")
+
+# --- CSS ---
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700&display=swap');
+.main { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.block-container { max-width: 800px; padding-left: 1rem !important; padding-right: 1rem !important; }
+h1, h2, h3 { font-family: 'Fredoka One', cursive !important; }
+p, li, label, .stMarkdown { font-family: 'Nunito', sans-serif !important; }
+
+.card { background: white; border-radius: 20px; padding: 25px; margin: 15px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
+.card-purple { border-left: 6px solid #9b59b6; }
+.card-blue { border-left: 6px solid #3498db; }
+.card-green { border-left: 6px solid #2ecc71; }
+.card-orange { border-left: 6px solid #f39c12; }
+.card-red { border-left: 6px solid #e74c3c; }
+
+.hero { text-align: center; padding: 20px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 50%, #ffd200 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 3.5rem; font-family: 'Fredoka One', cursive; margin-bottom: 0; }
+.hero-sub { text-align: center; font-size: 1.3rem; color: #666; margin-top: 0; }
+
+.score-box { text-align: center; padding: 30px; border-radius: 20px; margin: 20px 0; }
+.score-green { background: linear-gradient(135deg, #a8edea, #fed6e3); }
+.score-yellow { background: linear-gradient(135deg, #ffecd2, #fcb69f); }
+.score-red { background: linear-gradient(135deg, #ff9a9e, #fecfef); }
+.score-num { font-size: 4rem; font-weight: bold; font-family: 'Fredoka One', cursive; }
+
+.kahoot-q { background: linear-gradient(135deg, #6c5ce7, #a29bfe); color: white; padding: 30px; border-radius: 20px; text-align: center; font-size: 1.4rem; font-weight: bold; margin: 15px 0; box-shadow: 0 5px 20px rgba(108,92,231,0.4); }
+
+.timer { text-align: center; font-size: 2.5rem; font-family: 'Fredoka One', cursive; }
+.timer-ok { color: #2ecc71; }
+.timer-warn { color: #f39c12; }
+.timer-danger { color: #e74c3c; animation: pulse 0.5s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+
+.badge { display: inline-block; padding: 5px 15px; border-radius: 20px; font-size: 0.85rem; font-weight: bold; color: white; margin-bottom: 10px; }
+.badge-1 { background: #e74c3c; } .badge-2 { background: #3498db; } .badge-3 { background: #2ecc71; }
+.badge-4 { background: #f39c12; } .badge-5 { background: #9b59b6; } .badge-6 { background: #1abc9c; } .badge-7 { background: #e67e22; }
+
+div.stButton > button { border-radius: 15px !important; font-family: 'Nunito', sans-serif !important; font-weight: 700 !important; font-size: 1rem !important; padding: 10px 20px !important; transition: transform 0.2s !important; min-height: 48px !important; }
+div.stButton > button:hover { transform: scale(1.05) !important; }
+
+.nav-dot { display: inline-block; width: 35px; height: 35px; border-radius: 50%; text-align: center; line-height: 35px; margin: 3px; font-weight: bold; font-size: 0.8rem; }
+.nav-done { background: #2ecc71; color: white; }
+.nav-empty { background: #ddd; color: #666; }
+.nav-current { background: #6c5ce7; color: white; box-shadow: 0 0 10px #6c5ce7; }
+
+.result-correct { background: #d4edda; border-left: 5px solid #28a745; padding: 10px 15px; border-radius: 10px; margin: 5px 0; }
+.result-wrong { background: #f8d7da; border-left: 5px solid #dc3545; padding: 10px 15px; border-radius: 10px; margin: 5px 0; }
+
+.confetti { text-align: center; font-size: 3rem; animation: bounce 1s infinite; }
+@keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-20px); } }
+
+.student-card { text-align: center; padding: 30px 15px; border-radius: 25px; cursor: pointer; transition: transform 0.3s; min-height: 180px; }
+.student-card:hover { transform: scale(1.05); }
+
+.stImage img { max-height: 300px !important; object-fit: contain !important; margin: 0 auto !important; display: block !important; }
+
+/* Stats bar del quiz */
+.quiz-stats { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; background: white; border-radius: 15px; padding: 10px 12px; margin-bottom: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.quiz-stats span { font-family: 'Nunito', sans-serif; font-size: 0.9rem; font-weight: 700; padding: 4px 10px; background: #f4f4f8; border-radius: 20px; color: #333; white-space: nowrap; }
+
+/* Stats de resultados en fila */
+.stats-row { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+.stat-item { flex: 1 1 80px; text-align: center; padding: 15px 10px; border-radius: 15px; background: white; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.stat-item h3 { font-family: 'Fredoka One', cursive; font-size: 1.6rem; margin: 0 0 4px 0; }
+.stat-item p { font-size: 0.8rem; color: #666; margin: 0; font-family: 'Nunito', sans-serif; }
+.stat-orange { border-top: 5px solid #f39c12; }
+.stat-purple { border-top: 5px solid #9b59b6; }
+.stat-blue   { border-top: 5px solid #3498db; }
+
+/* Ocultar menú de Streamlit y botón Stop */
+#MainMenu { visibility: hidden !important; }
+header[data-testid="stHeader"] { visibility: hidden !important; }
+footer { visibility: hidden !important; }
+[data-testid="stToolbar"] { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+[data-testid="stStatusWidget"] { display: none !important; }
+
+/* ── MOBILE ── */
+@media (max-width: 768px) {
+    .hero { font-size: 2.2rem !important; padding: 12px 8px !important; }
+    .hero-sub { font-size: 1rem !important; }
+    .kahoot-q { font-size: 1.1rem !important; padding: 18px 14px !important; }
+    .timer { font-size: 2rem !important; }
+    .score-num { font-size: 2.8rem !important; }
+    .score-box { padding: 18px 12px !important; }
+    .card { padding: 14px !important; margin: 8px 0 !important; }
+    .student-card { min-height: auto !important; padding: 14px 8px !important; }
+    .student-card h2 { font-size: 1.2rem !important; }
+    div.stButton > button { font-size: 1rem !important; padding: 12px 8px !important; min-height: 52px !important; }
+    .stat-item h3 { font-size: 1.3rem !important; }
+    .stImage img { max-height: 200px !important; }
+    .block-container { padding-top: 1rem !important; }
+}
+</style>
+""", unsafe_allow_html=True)
+
+# --- Estado ---
+if 'phase' not in st.session_state:
+    st.session_state.phase = 'students'
+    st.session_state.student = None
+    st.session_state.materia = None
+    st.session_state.mode = 'normal'
+    st.session_state.questions = []
+    st.session_state.answers = {}
+    st.session_state.idx = 0
+    st.session_state.kahoot_start = None
+    st.session_state.kahoot_times = {}
+    st.session_state.kahoot_streak = 0
+    st.session_state.kahoot_score = 0
+    st.session_state.kahoot_answered = False
+    st.session_state.music_on = False
+
+if 'music_on' not in st.session_state:
+    st.session_state.music_on = False
+
+# ===================== MÚSICA GLOBAL (siempre arriba) =====================
+if st.session_state.music_on:
+    st.iframe(MUSIC_HTML, height=1)
+
+_music_label = "🔇 Silenciar música" if st.session_state.music_on else "🎵 Música"
+if st.button(_music_label, key="music_global"):
+    st.session_state.music_on = not st.session_state.music_on
+    st.rerun()
+
+def reset():
+    music_pref = st.session_state.get('music_on', False)
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.session_state.phase = 'students'
+    st.session_state.music_on = music_pref
+
+def go_home():
+    reset()
+
+# ===================== SELECCIÓN DE ESTUDIANTE =====================
+if st.session_state.phase == 'students':
+    st.markdown('<div class="hero">🏫 MatePlay</div>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">¡Aprende jugando! ¿Quién va a practicar? 🎮✨</p>', unsafe_allow_html=True)
+    st.write("")
+
+    if st.button("🏆 Ver tabla de puntuaciones", width='stretch'):
+        st.session_state.phase = 'leaderboard'
+        st.rerun()
+    st.write("")
+
+    cols = st.columns(3)
+    for i, (nombre, info) in enumerate(ESTUDIANTES.items()):
+        with cols[i]:
+            st.markdown(f"""
+            <div class="student-card" style="background: linear-gradient(135deg, {info['color']}22, {info['color']}44); border: 3px solid {info['color']};">
+                <div style="font-size: 4rem;">{info['emoji']}</div>
+                <h2 style="color: {info['color']}; margin: 5px 0;">{nombre}</h2>
+                <p style="color: #666;">{info['grado']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"{info['emoji']} ¡Soy {nombre}!", key=f"student_{nombre}", type="primary"):
+                st.session_state.student = nombre
+                st.session_state.phase = 'materias'
+                st.rerun()
+
+# ===================== SELECCIÓN DE MATERIA =====================
+elif st.session_state.phase == 'materias':
+    nombre = st.session_state.student
+    info = ESTUDIANTES[nombre]
+    st.markdown(f'<div class="hero" style="font-size:2.5rem;">{info["emoji"]} ¡Hola {nombre}!</div>', unsafe_allow_html=True)
+    st.markdown(f'<p class="hero-sub">¿Qué materia quieres practicar?</p>', unsafe_allow_html=True)
+    st.write("")
+
+    materias = info['materias']
+    cols = st.columns(max(len(materias), 1))
+    for i, (mat_nombre, mat_info) in enumerate(materias.items()):
+        with cols[i % len(cols)]:
+            st.markdown(f"""
+            <div class="card card-blue" style="text-align:center;">
+                <div style="font-size:3rem;">{mat_info['emoji']}</div>
+                <h3>{mat_nombre}</h3>
+                <p>{len(mat_info['topics'])} temas disponibles</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"{mat_info['emoji']} {mat_nombre}", key=f"mat_{mat_nombre}", type="primary"):
+                st.session_state.materia = mat_nombre
+                st.session_state.phase = 'menu'
+                st.rerun()
+
+    st.write("")
+    if st.button("⬅️ Cambiar estudiante"):
+        go_home()
+        st.rerun()
+
+# ===================== MENÚ MODO =====================
+elif st.session_state.phase == 'menu':
+    nombre = st.session_state.student
+    info = ESTUDIANTES[nombre]
+    materia = st.session_state.materia
+    st.markdown(f'<div class="hero" style="font-size:2.2rem;">{info["emoji"]} {nombre} — {materia}</div>', unsafe_allow_html=True)
+    st.session_state.phase = 'config'
+    st.rerun()
+
+# ===================== CONFIGURACIÓN =====================
+elif st.session_state.phase == 'config':
+    nombre = st.session_state.student
+    info = ESTUDIANTES[nombre]
+    materia = st.session_state.materia
+    mat_info = info['materias'][materia]
+    topics = mat_info['topics']
+
+    st.markdown(f'<div class="hero" style="font-size:2rem;">{info["emoji"]} {nombre} — {materia}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="card card-blue">', unsafe_allow_html=True)
+    temas = st.multiselect("📚 Elige los temas:", list(topics.keys()), default=list(topics.keys()))
+
+    dif_emojis = {
+        "Fácil": "🟢 Fácil", "Normal": "🟡 Normal", "Difícil": "🔴 Difícil",
+        "💀 Super Difícil": "💀 Super Difícil", "☠️ Mega Difícil": "☠️ Mega Difícil",
+    }
+    dif_sel = st.radio("💪 Dificultad:", DIFICULTADES, index=1, horizontal=True, format_func=lambda x: dif_emojis[x])
+
+    default_time = {"Fácil": 30, "Normal": 20, "Difícil": 45, "💀 Super Difícil": 15, "☠️ Mega Difícil": 10}[dif_sel]
+    if dif_sel in ("💀 Super Difícil", "☠️ Mega Difícil"):
+        timer = default_time
+        st.info(f"⏱️ Tiempo fijo: **{timer} segundos** — bloqueado en este modo.")
+    else:
+        timer = st.select_slider("⏱️ Segundos por pregunta:", options=[10, 15, 20, 30, 45, 60, 90], value=default_time)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="card card-orange" style="text-align:center;">
+        <h3>♾️ Modo Infinito</h3>
+        <p>Las preguntas no se repiten. ¡Acumula XP y sube de nivel!</p>
+        <p>🔥 Cada acierto sube tu multiplicador: x2, x3, x4...</p>
+        <p>❌ Si fallas, el multiplicador vuelve a x1</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅️ Volver"):
+            st.session_state.phase = 'materias'
+            st.rerun()
+    with col2:
+        if st.button("🚀 ¡A jugar!", type="primary"):
+            if not temas:
+                st.error("¡Elige al menos un tema! 📚")
+            else:
+                gen = InfiniteGenerator(mat_info['generator'], temas, dif_sel)
+                first_q = gen.next()
+                st.session_state.gen = gen
+                st.session_state.current_q = first_q
+                st.session_state.score = new_score()
+                st.session_state.timer = timer
+                st.session_state.q_start = None
+                st.session_state.answered = False
+                st.session_state.last_gained = 0
+                st.session_state.last_correct = None
+                st.session_state.current_topics = topics
+                st.session_state.dificultad = dif_sel
+                st.session_state.phase = 'quiz'
+                st.rerun()
+
+# ===================== QUIZ INFINITO =====================
+elif st.session_state.phase == 'quiz':
+    q = st.session_state.current_q
+    sc = st.session_state.score
+    level, level_xp, level_needed = get_level(sc['xp'])
+    rank = get_rank(sc['xp'])
+
+    if st.session_state.q_start is None:
+        st.session_state.q_start = time.time()
+        st.session_state.answered = False
+        st.session_state.last_correct = None
+
+    elapsed = time.time() - st.session_state.q_start
+    remaining = max(0, st.session_state.timer - elapsed)
+
+    # Stats bar compacta (funciona en móvil)
+    st.markdown(f"""
+    <div class="quiz-stats">
+        <span>⭐ {sc['xp']} XP</span>
+        <span>💪 x{sc['multiplier']}</span>
+        <span>🔥 {sc['streak']} racha</span>
+        <span>🏅 Nv.{level}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("📊 Terminar", key="stop_top", width='stretch'):
+        st.session_state.phase = 'results'
+        st.rerun()
+
+    # Barra de nivel
+    st.progress(level_xp / level_needed, text=f"{rank} — {level_xp}/{level_needed} XP para Nv.{level+1}")
+
+    # Timer
+    timer_cls = "timer-ok" if remaining > 10 else ("timer-warn" if remaining > 5 else "timer-danger")
+    st.markdown(f'<div class="timer {timer_cls}">⏱️ {int(remaining)}s</div>', unsafe_allow_html=True)
+    st.progress(remaining / st.session_state.timer)
+
+    # Pregunta
+    st.markdown(f'<span class="badge badge-{hash(q["topic"])%7+1}">{q["topic"]}</span> <span class="badge badge-5">#{sc["total"]+1}</span>', unsafe_allow_html=True)
+    st.markdown(f'<div class="kahoot-q">{q["question"]}</div>', unsafe_allow_html=True)
+
+    # Imágenes (solo cuando no se ha respondido)
+    if not st.session_state.answered:
+        if q.get('imagen2'):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Imagen 1**")
+                try: st.image(q['imagen'], width='stretch')
+                except: pass
+            with c2:
+                st.markdown("**Imagen 2**")
+                try: st.image(q['imagen2'], width='stretch')
+                except: pass
+        elif q.get('imagen'):
+            try: st.image(q['imagen'], width='stretch')
+            except: pass
+
+        # Texto de comparación (preguntas V/F y Sí/No con imagen)
+        if q.get('texto_comparar'):
+            st.markdown(f"""
+            <div style="background:#f0f0ff; border-left:4px solid #9b59b6;
+                        padding:12px 16px; border-radius:10px; margin:8px 0;
+                        font-size:1rem; font-style:italic; color:#333;">
+                {q['texto_comparar']}
+            </div>""", unsafe_allow_html=True)
+
+    # --- RESPONDER ---
+    if not st.session_state.answered:
+
+        def _submit(ans):
+            elapsed_f = time.time() - st.session_state.q_start
+            qid = q.get('_qid', hash(q['question']))
+            correct = check_answer(q, ans)
+            gained = record_answer(sc, qid, correct and str(ans).strip() != '',
+                                   tiempo_seg=elapsed_f, timer_total=st.session_state.timer,
+                                   dificultad=st.session_state.get('dificultad', 'Normal'))
+            st.session_state.last_gained = gained
+            st.session_state.last_correct = correct and str(ans).strip() != ''
+            st.session_state.last_time = elapsed_f
+            st.session_state.answered = True
+
+        opciones = q.get('opciones_btn', [])
+        cols = st.columns(2)
+        for i_btn, opcion in enumerate(opciones):
+            with cols[i_btn % 2]:
+                if st.button(opcion, key=f"opt_{sc['total']}_{i_btn}", type="primary", width='stretch'):
+                    _submit(opcion)
+                    st.rerun()
+
+        # Timer expire
+        if remaining <= 0 and not st.session_state.answered:
+            _submit("")
+            st.rerun()
+        elif not st.session_state.answered:
+            time.sleep(1)
+            st.rerun()
+
+    # --- RETROALIMENTACIÓN ---
+    else:
+        # Mostrar imagen y comparación también después de responder
+        if q.get('imagen2'):
+            c1, c2 = st.columns(2)
+            with c1:
+                try: st.image(q['imagen'], width='stretch')
+                except: pass
+            with c2:
+                try: st.image(q['imagen2'], width='stretch')
+                except: pass
+        elif q.get('imagen'):
+            try: st.image(q['imagen'], width='stretch')
+            except: pass
+        if q.get('texto_comparar'):
+            st.markdown(f"""
+            <div style="background:#f0f0ff; border-left:4px solid #9b59b6;
+                        padding:12px 16px; border-radius:10px; margin:8px 0;
+                        font-size:1rem; font-style:italic; color:#333;">
+                {q['texto_comparar']}
+            </div>""", unsafe_allow_html=True)
+
+        correct = st.session_state.last_correct
+        gained = st.session_state.last_gained
+        if correct:
+            st.markdown('<div class="confetti">🎉🌟🎉</div>', unsafe_allow_html=True)
+            t = st.session_state.get('last_time', 0)
+            st.success(f"¡Correcto! **+{gained} XP** — x{sc['multiplier']} 🔥 ({t:.1f}s)")
+        else:
+            st.error(f"❌ Incorrecto — **{gained} XP** 💔 multiplicador vuelve a x1")
+            st.markdown(f'<div class="result-wrong"><b>Respuesta correcta:</b> {q["answer"]}</div>', unsafe_allow_html=True)
+        if q.get('procedure'):
+            with st.expander("📐 Ver procedimiento"):
+                st.markdown(q['procedure'])
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("➡️ Siguiente pregunta", type="primary", width='stretch'):
+                next_q = st.session_state.gen.next()
+                st.session_state.current_q = next_q
+                st.session_state.q_start = None
+                st.session_state.answered = False
+                st.rerun()
+        with col2:
+            if st.button("📊 Terminar y ver resultados", width='stretch'):
+                st.session_state.phase = 'results'
+                st.rerun()
+
+# ===================== RESULTADOS =====================
+elif st.session_state.phase == 'results':
+    sc = st.session_state.score
+    topics = st.session_state.get('current_topics', {})
+    nombre = st.session_state.student
+    info = ESTUDIANTES.get(nombre, {})
+    materia = st.session_state.get('materia', '')
+    level, level_xp, level_needed = get_level(sc['xp'])
+    rank = get_rank(sc['xp'])
+
+    # Guardar sesión y obtener logros nuevos
+    if not st.session_state.get('session_saved'):
+        temas_str = materia
+        nuevos_logros = save_session(nombre, sc, materia, temas_str, st.session_state.get('dificultad', 'Normal'))
+        st.session_state.session_saved = True
+        st.session_state.nuevos_logros = nuevos_logros
+    nuevos_logros = st.session_state.get('nuevos_logros', [])
+
+    pct = int(100 * sc['correct'] / sc['total']) if sc['total'] else 0
+
+    if pct >= 80:
+        st.markdown('<div class="confetti">🎉🌟🏆🌟🎉</div>', unsafe_allow_html=True)
+        st.balloons()
+
+    st.markdown(f'<div class="hero" style="font-size:2.2rem;">{info.get("emoji","")} Resultados de {nombre}</div>', unsafe_allow_html=True)
+
+    # Score box
+    score_cls = "score-green" if pct >= 80 else ("score-yellow" if pct >= 60 else "score-red")
+    st.markdown(f"""
+    <div class="score-box {score_cls}">
+        <div style="font-size:2rem;">{rank}</div>
+        <div class="score-num">{sc['xp']} XP</div>
+        <div style="font-size:1.2rem;">Nivel <b>{level}</b> — {pct}% aciertos ({sc['correct']}/{sc['total']})</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Stats en fila responsiva
+    st.markdown(f"""
+    <div class="stats-row">
+        <div class="stat-item stat-orange"><h3>🔥 {sc['max_streak']}</h3><p>Racha máxima</p></div>
+        <div class="stat-item stat-purple"><h3>💪 x{sc['max_multiplier']}</h3><p>Multiplicador máx</p></div>
+        <div class="stat-item stat-blue"><h3>📝 {sc['total']}</h3><p>Preguntas vistas</p></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Mensaje
+    if nuevos_logros:
+        st.markdown('<div class="card card-orange"><h3>🎉 ¡Nuevos logros desbloqueados!</h3></div>', unsafe_allow_html=True)
+        for l in nuevos_logros:
+            st.success(f"{l['emoji']} **{l['nombre']}** — {l['desc']}")
+
+    if pct >= 90:
+        st.success(f"🌟 ¡INCREÍBLE {nombre}! ¡Eres un genio! 🧠✨")
+    elif pct >= 70:
+        st.info(f"😊 ¡Muy bien {nombre}! Estás cerca de dominar estos temas. 💪")
+    elif pct >= 50:
+        st.warning(f"🤔 Vas avanzando {nombre}, pero hay temas que repasar. ¡Tú puedes! 📖")
+    else:
+        st.error(f"📚 {nombre}, necesitas practicar más. ¡Cada intento te hace mejor! 💪🌟")
+
+    # Detalle por tema
+    per_topic = {}
+    for qid, correcto in sc['history']:
+        # No tenemos el topic en history, usamos el score general
+        pass
+
+    st.write("")
+    r1c1, r1c2 = st.columns(2)
+    with r1c1:
+        if st.button("🔄 Jugar de nuevo", type="primary", width='stretch'):
+            st.session_state.phase = 'config'
+            st.session_state.session_saved = False
+            st.rerun()
+    with r1c2:
+        if st.button("📚 Otra materia", width='stretch'):
+            st.session_state.phase = 'materias'
+            st.session_state.session_saved = False
+            st.rerun()
+    r2c1, r2c2 = st.columns(2)
+    with r2c1:
+        if st.button("🏆 Tabla de puntos", width='stretch'):
+            st.session_state.phase = 'leaderboard'
+            st.rerun()
+    with r2c2:
+        if st.button("🏠 Inicio", width='stretch'):
+            go_home()
+            st.rerun()
+
+# ===================== TABLA DE PUNTUACIONES =====================
+elif st.session_state.phase == 'leaderboard':
+    st.markdown('<div class="hero" style="font-size:2.5rem;">🏆 Tabla de Puntuaciones</div>', unsafe_allow_html=True)
+    st.write("")
+
+    def _render_ranking(ranking, mostrar_mult=True):
+        if not ranking:
+            st.info("¡Nadie ha jugado en este modo todavía!")
+            return
+        medallas = ["🥇", "🥈", "🥉"]
+        for i, p in enumerate(ranking):
+            medalla = medallas[i] if i < 3 else f"#{i+1}"
+            color = ["#ffd700", "#c0c0c0", "#cd7f32"][i] if i < 3 else "#9b59b6"
+            logros_icons = " ".join(
+                next((l["emoji"] for l in LOGROS if l["id"] == lid), "")
+                for lid in p.get("logros", [])
+            )
+            extras = f"📝 {p['total_respuestas']} preguntas &nbsp;|&nbsp; ✅ {p['pct']}% efectividad &nbsp;|&nbsp; 🔥 Racha: {p['max_racha']} &nbsp;|&nbsp; 🎯 Mejor sesión: {p['mejor_sesion_xp']:,} XP &nbsp;|&nbsp; 🎮 {p['sesiones']} sesiones"
+            if mostrar_mult:
+                extras += f" &nbsp;|&nbsp; 💪 Mult máx: x{p.get('max_multiplicador', 1)}"
+            st.markdown(f"""
+            <div class="card" style="border-left: 6px solid {color}; margin: 8px 0;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                    <div>
+                        <span style="font-size:1.8rem;">{medalla}</span>
+                        <span style="font-size:1.3rem; font-weight:bold; margin-left:8px;">{p['nombre']}</span>
+                        <span style="margin-left:6px; font-size:1rem;">{logros_icons}</span>
+                    </div>
+                    <div style="font-size:1.6rem; font-weight:bold; color:{color};">&#11088; {p['xp_total']:,} XP</div>
+                </div>
+                <div style="margin-top:8px; font-size:0.85rem; color:#555; flex-wrap:wrap;">{extras}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # Tabs por dificultad
+    tab_labels = ["🌐 Global"] + DIFICULTADES_ORDEN
+    tabs = st.tabs(tab_labels)
+
+    with tabs[0]:
+        _render_ranking(get_ranking())
+
+    for i, dif in enumerate(DIFICULTADES_ORDEN):
+        with tabs[i + 1]:
+            _render_ranking(get_ranking_dificultad(dif), mostrar_mult=(dif not in ("💀 Super Difícil", "☠️ Mega Difícil")))
+
+    st.write("")
+    with st.expander("🏅 Todos los logros disponibles"):
+        cols = st.columns(2)
+        for i, logro in enumerate(LOGROS):
+            with cols[i % 2]:
+                st.markdown(f"{logro['emoji']} **{logro['nombre']}** — {logro['desc']}")
+
+    st.write("")
+    if st.button("⬅️ Volver al inicio", type="primary"):
+        go_home()
+        st.rerun()
