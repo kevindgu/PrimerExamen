@@ -5,6 +5,25 @@ from datetime import datetime
 
 SCORES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scores.json")
 
+# ── Google Sheets (si hay credenciales configuradas) ──────────────────────────
+def _sheets_disponible():
+    try:
+        import streamlit as st
+        return "gcp_service_account" in st.secrets and "SHEET_ID" in st.secrets
+    except Exception:
+        return False
+
+def _get_sheet():
+    import streamlit as st
+    import gspread
+    from google.oauth2.service_account import Credentials
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    client = gspread.authorize(creds)
+    return client.open_by_key(st.secrets["SHEET_ID"]).sheet1
+
 LOGROS = [
     {"id": "primera_vez",    "emoji": "🐣", "nombre": "Primera vez",       "desc": "Completar tu primera sesión",              "cond": lambda s: s["sesiones"] >= 1},
     {"id": "racha_5",        "emoji": "🔥", "nombre": "En llamas",          "desc": "Racha de 5 respuestas correctas",          "cond": lambda s: s["max_racha"] >= 5},
@@ -21,7 +40,28 @@ LOGROS = [
 ]
 
 
+def _load_from_sheets():
+    try:
+        sheet = _get_sheet()
+        val = sheet.acell("A1").value
+        if val:
+            return json.loads(val)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_to_sheets(data):
+    try:
+        sheet = _get_sheet()
+        sheet.update("A1", [[json.dumps(data, ensure_ascii=False)]])
+    except Exception:
+        pass
+
+
 def _load():
+    if _sheets_disponible():
+        return _load_from_sheets()
     if not os.path.exists(SCORES_FILE):
         return {}
     try:
@@ -32,6 +72,9 @@ def _load():
 
 
 def _save(data):
+    if _sheets_disponible():
+        _save_to_sheets(data)
+        return
     with open(SCORES_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 

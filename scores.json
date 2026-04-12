@@ -1,9 +1,9 @@
 {
   "TYLER": {
-    "xp_total": 18992,
-    "sesiones": 11,
-    "total_respuestas": 69,
-    "total_correctas": 47,
+    "xp_total": 25333,
+    "sesiones": 12,
+    "total_respuestas": 90,
+    "total_correctas": 61,
     "max_racha": 8,
     "max_multiplicador": 4,
     "mejor_pct": 100,
@@ -150,6 +150,18 @@
         "pct": 50,
         "racha": 1,
         "mult": 2
+      },
+      {
+        "fecha": "11/04/2026 17:52",
+        "materia": "Estudios Sociales",
+        "temas": "Estudios Sociales",
+        "dificultad": "Normal",
+        "xp": 6341,
+        "correctas": 14,
+        "total": 21,
+        "pct": 66,
+        "racha": 6,
+        "mult": 4
       }
     ],
     "por_dificultad": {
@@ -162,10 +174,10 @@
         "max_racha": 5
       },
       "Normal": {
-        "xp_total": 13595,
-        "sesiones": 8,
-        "total_respuestas": 49,
-        "total_correctas": 34,
+        "xp_total": 19936,
+        "sesiones": 9,
+        "total_respuestas": 70,
+        "total_correctas": 48,
         "mejor_sesion_xp": 6654,
         "max_racha": 8
       },
