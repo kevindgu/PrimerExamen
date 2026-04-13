@@ -80,9 +80,15 @@ def _save(data):
 
 
 DIFICULTADES_ORDEN = ["Fácil", "Normal", "Difícil", "💀 Super Difícil", "☠️ Mega Difícil"]
+MATERIAS_ORDEN = ["Matemáticas", "Ciencias", "Estudios Sociales", "Español"]
 
 
 def _dif_stats_default():
+    return {"xp_total": 0, "sesiones": 0, "total_respuestas": 0,
+            "total_correctas": 0, "mejor_sesion_xp": 0, "max_racha": 0}
+
+
+def _materia_stats_default():
     return {"xp_total": 0, "sesiones": 0, "total_respuestas": 0,
             "total_correctas": 0, "mejor_sesion_xp": 0, "max_racha": 0}
 
@@ -102,22 +108,32 @@ def get_player(nombre):
             "logros": [],
             "historial": [],
             "por_dificultad": {},
+            "por_materia": {},
+            "temas_stats": {},
+            "preguntas_debiles": [],
         }
         _save(data)
     return data[nombre]
 
 
-def save_session(nombre, score, materia, temas, dificultad="Normal"):
-    """Guarda una sesión terminada y actualiza stats globales y por dificultad."""
+def save_session(nombre, score, materia, temas, dificultad="Normal",
+                 preguntas_fallidas=None, topic_stats_sesion=None):
+    """Guarda una sesión terminada y actualiza stats globales, por dificultad y por materia."""
     data = _load()
     if nombre not in data:
         get_player(nombre)
         data = _load()
 
     p = data[nombre]
-    # Migrar jugadores sin por_dificultad
+    # Migrar jugadores sin campos nuevos
     if "por_dificultad" not in p:
         p["por_dificultad"] = {}
+    if "por_materia" not in p:
+        p["por_materia"] = {}
+    if "temas_stats" not in p:
+        p["temas_stats"] = {}
+    if "preguntas_debiles" not in p:
+        p["preguntas_debiles"] = []
 
     total = score["total"]
     correctas = score["correct"]
@@ -144,6 +160,35 @@ def save_session(nombre, score, materia, temas, dificultad="Normal"):
     d["total_correctas"] += correctas
     d["mejor_sesion_xp"] = max(d["mejor_sesion_xp"], score["xp"])
     d["max_racha"] = max(d["max_racha"], score["max_streak"])
+
+    # Actualizar stats por materia
+    if materia not in p["por_materia"]:
+        p["por_materia"][materia] = _materia_stats_default()
+    m = p["por_materia"][materia]
+    m["xp_total"] += score["xp"]
+    m["sesiones"] += 1
+    m["total_respuestas"] += total
+    m["total_correctas"] += correctas
+    m["mejor_sesion_xp"] = max(m["mejor_sesion_xp"], score["xp"])
+    m["max_racha"] = max(m["max_racha"], score["max_streak"])
+
+    # Actualizar precisión por tema (acumulada)
+    if topic_stats_sesion:
+        for clave, ts in topic_stats_sesion.items():
+            if clave not in p["temas_stats"]:
+                p["temas_stats"][clave] = {
+                    "materia": ts["materia"],
+                    "topic": ts["topic"],
+                    "intentos": 0,
+                    "correctas": 0,
+                }
+            p["temas_stats"][clave]["intentos"] += ts["intentos"]
+            p["temas_stats"][clave]["correctas"] += ts["correctas"]
+
+    # Guardar preguntas fallidas (últimas 50 en total)
+    if preguntas_fallidas:
+        p["preguntas_debiles"].extend(preguntas_fallidas)
+        p["preguntas_debiles"] = p["preguntas_debiles"][-50:]
 
     # Historial (últimas 20 sesiones)
     p["historial"].append({
@@ -194,6 +239,40 @@ def get_ranking():
             "logros": stats["logros"],
         })
     return sorted(ranking, key=lambda x: x["xp_total"], reverse=True)
+
+
+def get_ranking_materia(materia):
+    """Retorna lista ordenada por XP en una materia específica."""
+    data = _load()
+    ranking = []
+    for nombre, stats in data.items():
+        m = stats.get("por_materia", {}).get(materia)
+        if not m or m["sesiones"] == 0:
+            continue
+        pct = int(100 * m["total_correctas"] / m["total_respuestas"]) if m["total_respuestas"] > 0 else 0
+        ranking.append({
+            "nombre": nombre,
+            "xp_total": m["xp_total"],
+            "sesiones": m["sesiones"],
+            "total_respuestas": m["total_respuestas"],
+            "pct": pct,
+            "max_racha": m["max_racha"],
+            "mejor_sesion_xp": m["mejor_sesion_xp"],
+            "logros": stats["logros"],
+        })
+    return sorted(ranking, key=lambda x: x["xp_total"], reverse=True)
+
+
+def get_temas_stats(nombre):
+    """Retorna dict de precisión por tema para un estudiante."""
+    data = _load()
+    return data.get(nombre, {}).get("temas_stats", {})
+
+
+def get_preguntas_debiles(nombre):
+    """Retorna lista de preguntas fallidas recientes de un estudiante."""
+    data = _load()
+    return data.get(nombre, {}).get("preguntas_debiles", [])
 
 
 def get_ranking_dificultad(dificultad):

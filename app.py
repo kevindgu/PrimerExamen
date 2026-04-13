@@ -6,7 +6,9 @@ import time
 from utils import ESTUDIANTES, DIFICULTADES, check_answer
 from scoring import new_score, record_answer, get_level, get_rank
 from infinite import InfiniteGenerator
-from leaderboard import save_session, get_ranking, get_ranking_dificultad, get_player, LOGROS, DIFICULTADES_ORDEN
+from leaderboard import (save_session, get_ranking, get_ranking_dificultad, get_ranking_materia,
+                         get_temas_stats, get_preguntas_debiles,
+                         get_player, LOGROS, DIFICULTADES_ORDEN, MATERIAS_ORDEN)
 from musica import MUSIC_HTML
 
 st.set_page_config(page_title="🧮 MatePlay", page_icon="🧮", layout="centered")
@@ -335,6 +337,8 @@ elif st.session_state.phase == 'config':
                 st.session_state.last_correct = None
                 st.session_state.current_topics = topics
                 st.session_state.dificultad = dif_sel
+                st.session_state.wrong_questions = []
+                st.session_state.topic_stats = {}
                 st.session_state.phase = 'quiz'
                 st.rerun()
     with col3:
@@ -436,13 +440,35 @@ elif st.session_state.phase == 'quiz':
             elapsed_f = time.time() - st.session_state.q_start
             qid = q.get('_qid', hash(q['question']))
             correct = check_answer(q, ans)
-            gained = record_answer(sc, qid, correct and str(ans).strip() != '',
+            respondio = str(ans).strip() != ''
+            gained = record_answer(sc, qid, correct and respondio,
                                    tiempo_seg=elapsed_f, timer_total=st.session_state.timer,
                                    dificultad=st.session_state.get('dificultad', 'Normal'))
             st.session_state.last_gained = gained
-            st.session_state.last_correct = correct and str(ans).strip() != ''
+            st.session_state.last_correct = correct and respondio
             st.session_state.last_time = elapsed_f
             st.session_state.answered = True
+
+            # ── Tracking de preguntas débiles y precisión por tema ──
+            _materia = st.session_state.get('materia', '')
+            _topic = q.get('topic', '')
+            _clave = f"{_materia}::{_topic}"
+            _ts = st.session_state.setdefault('topic_stats', {})
+            if _clave not in _ts:
+                _ts[_clave] = {"materia": _materia, "topic": _topic, "intentos": 0, "correctas": 0}
+            _ts[_clave]["intentos"] += 1
+            if correct and respondio:
+                _ts[_clave]["correctas"] += 1
+            elif respondio:
+                # Solo guardar si respondió algo (no tiempo vencido)
+                st.session_state.setdefault('wrong_questions', []).append({
+                    "fecha": time.strftime("%d/%m/%Y"),
+                    "materia": _materia,
+                    "topic": _topic,
+                    "pregunta": q.get('question', ''),
+                    "respuesta_dada": str(ans),
+                    "respuesta_correcta": q.get('answer', ''),
+                })
 
         opciones = q.get('opciones_btn', [])
 
@@ -538,7 +564,12 @@ elif st.session_state.phase == 'results':
     # Guardar sesión y obtener logros nuevos
     if not st.session_state.get('session_saved'):
         temas_str = materia
-        nuevos_logros = save_session(nombre, sc, materia, temas_str, st.session_state.get('dificultad', 'Normal'))
+        nuevos_logros = save_session(
+            nombre, sc, materia, temas_str,
+            st.session_state.get('dificultad', 'Normal'),
+            preguntas_fallidas=st.session_state.get('wrong_questions', []),
+            topic_stats_sesion=st.session_state.get('topic_stats', {}),
+        )
         st.session_state.session_saved = True
         st.session_state.nuevos_logros = nuevos_logros
     nuevos_logros = st.session_state.get('nuevos_logros', [])
@@ -840,16 +871,79 @@ elif st.session_state.phase == 'leaderboard':
             </div>
             """, unsafe_allow_html=True)
 
-    # Tabs por dificultad
-    tab_labels = ["🌐 Global"] + DIFICULTADES_ORDEN
-    tabs = st.tabs(tab_labels)
+    tab_global, tab_mat, tab_dif, tab_debiles = st.tabs([
+        "🌐 Global XP", "📚 Por Materia", "💪 Por Dificultad", "📉 Áreas Débiles"
+    ])
 
-    with tabs[0]:
+    # ── Global ──
+    with tab_global:
         _render_ranking(get_ranking())
 
-    for i, dif in enumerate(DIFICULTADES_ORDEN):
-        with tabs[i + 1]:
-            _render_ranking(get_ranking_dificultad(dif), mostrar_mult=(dif not in ("💀 Super Difícil", "☠️ Mega Difícil")))
+    # ── Por Materia ──
+    with tab_mat:
+        mat_sel = st.selectbox("Selecciona la materia:", MATERIAS_ORDEN, key="lb_mat_sel")
+        _render_ranking(get_ranking_materia(mat_sel), mostrar_mult=False)
+
+    # ── Por Dificultad ──
+    with tab_dif:
+        dif_tabs = st.tabs(DIFICULTADES_ORDEN)
+        for i, dif in enumerate(DIFICULTADES_ORDEN):
+            with dif_tabs[i]:
+                _render_ranking(get_ranking_dificultad(dif),
+                                mostrar_mult=(dif not in ("💀 Super Difícil", "☠️ Mega Difícil")))
+
+    # ── Áreas Débiles ──
+    with tab_debiles:
+        st.markdown("### 📉 Temas por mejorar — por estudiante")
+        st.caption("Se actualiza al terminar cada sesión de quiz.")
+        st.write("")
+        for nombre, info in ESTUDIANTES.items():
+            temas = get_temas_stats(nombre)
+            preguntas = get_preguntas_debiles(nombre)
+            if not temas and not preguntas:
+                continue
+            with st.expander(f"{info['emoji']} {nombre}", expanded=True):
+                if temas:
+                    # Calcular precisión por tema y ordenar de peor a mejor
+                    filas = []
+                    for clave, ts in temas.items():
+                        intentos = ts["intentos"]
+                        correctas = ts["correctas"]
+                        pct_t = int(100 * correctas / intentos) if intentos else 0
+                        filas.append((ts["materia"], ts["topic"], correctas, intentos, pct_t))
+                    filas.sort(key=lambda x: x[4])  # peor primero
+
+                    st.markdown("**Precisión por tema (de menor a mayor):**")
+                    for mat_t, topic_t, correctas_t, intentos_t, pct_t in filas:
+                        color_b = "#e74c3c" if pct_t < 60 else ("#f39c12" if pct_t < 80 else "#2ecc71")
+                        st.markdown(f"""
+                        <div style="margin:4px 0;">
+                            <span style="font-size:0.85rem; color:#555; min-width:140px; display:inline-block;">
+                                <b>{mat_t}</b> › {topic_t}
+                            </span>
+                            <span style="font-size:0.85rem; font-weight:bold; color:{color_b}; margin-left:8px;">
+                                {pct_t}% ({correctas_t}/{intentos_t})
+                            </span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        st.progress(pct_t / 100)
+
+                if preguntas:
+                    st.write("")
+                    st.markdown("**Últimas preguntas incorrectas:**")
+                    for pq in reversed(preguntas[-10:]):  # últimas 10, más reciente primero
+                        mat_icon = {"Matemáticas": "🧮", "Ciencias": "🔬",
+                                    "Estudios Sociales": "🌍", "Español": "📖"}.get(pq.get("materia", ""), "📝")
+                        st.markdown(f"""
+                        <div class="result-wrong" style="margin:5px 0; font-size:0.9rem;">
+                            {mat_icon} <b>{pq.get('materia','')} › {pq.get('topic','')}</b>
+                            &nbsp;<span style="color:#888; font-size:0.8rem;">{pq.get('fecha','')}</span><br>
+                            <span style="color:#333;">❓ {pq.get('pregunta','')[:120]}</span><br>
+                            <span style="color:#dc3545;">✗ Respondió: <b>{pq.get('respuesta_dada','')[:60]}</b></span>
+                            &nbsp;&nbsp;
+                            <span style="color:#28a745;">✓ Correcta: <b>{pq.get('respuesta_correcta','')[:60]}</b></span>
+                        </div>
+                        """, unsafe_allow_html=True)
 
     st.write("")
     with st.expander("🏅 Todos los logros disponibles"):
