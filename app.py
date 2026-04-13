@@ -1,5 +1,7 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import random
+import re
 import time
 from utils import ESTUDIANTES, DIFICULTADES, check_answer
 from scoring import new_score, record_answer, get_level, get_rank
@@ -86,6 +88,18 @@ footer { visibility: hidden !important; }
 [data-testid="stDecoration"] { display: none !important; }
 [data-testid="stStatusWidget"] { display: none !important; }
 
+/* ── MODO EXAMEN ── */
+.exam-header { background: white; border-radius: 20px; padding: 20px 25px; margin-bottom: 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-top: 6px solid #2c3e50; }
+.exam-header h2 { font-family: 'Fredoka One', cursive; color: #2c3e50; margin: 0 0 4px 0; font-size: 1.6rem; }
+.exam-header p { color: #666; margin: 0; font-size: 0.95rem; font-family: 'Nunito', sans-serif; }
+.exam-instrucciones { background: #fff9e6; border: 2px dashed #f39c12; border-radius: 12px; padding: 12px 18px; margin-bottom: 18px; font-family: 'Nunito', sans-serif; font-size: 0.95rem; color: #7d6608; }
+.exam-pregunta { background: white; border-radius: 15px; padding: 20px 22px; margin: 12px 0; box-shadow: 0 3px 12px rgba(0,0,0,0.08); border-left: 5px solid #6c5ce7; }
+.exam-pregunta .num { font-family: 'Fredoka One', cursive; color: #6c5ce7; font-size: 1.1rem; }
+.exam-pregunta .texto { font-family: 'Nunito', sans-serif; font-size: 1.05rem; font-weight: 700; color: #2c3e50; margin: 6px 0 14px 0; }
+.exam-result-correct { background: #d4edda; border-left: 5px solid #28a745; padding: 12px 16px; border-radius: 10px; margin: 5px 0; font-family: 'Nunito', sans-serif; }
+.exam-result-wrong { background: #f8d7da; border-left: 5px solid #dc3545; padding: 12px 16px; border-radius: 10px; margin: 5px 0; font-family: 'Nunito', sans-serif; }
+.exam-result-empty { background: #fff3cd; border-left: 5px solid #ffc107; padding: 12px 16px; border-radius: 10px; margin: 5px 0; font-family: 'Nunito', sans-serif; }
+
 /* ── MOBILE ── */
 @media (max-width: 768px) {
     .hero { font-size: 2.2rem !important; padding: 12px 8px !important; }
@@ -120,6 +134,9 @@ if 'phase' not in st.session_state:
     st.session_state.kahoot_score = 0
     st.session_state.kahoot_answered = False
     st.session_state.music_on = False
+    st.session_state.last_spoken_qid = None
+    st.session_state.speak_counter = 0
+    st.session_state.force_speak = False
 
 if 'music_on' not in st.session_state:
     st.session_state.music_on = False
@@ -142,6 +159,46 @@ def reset():
 
 def go_home():
     reset()
+
+
+def _tts_abby(texto, opciones=None, counter=0):
+    """Lee la pregunta en voz alta usando el Web Speech API del navegador."""
+    # Limpiar markdown y emojis para que suene natural
+    limpio = re.sub(r'\*+', '', texto)
+    limpio = re.sub(r'[_~`#]', '', limpio)
+    limpio = re.sub(r'[^\w\s¿?¡!áéíóúüñÁÉÍÓÚÜÑ,.\-:()]', ' ', limpio)
+    limpio = re.sub(r'\s+', ' ', limpio).strip()
+    if opciones:
+        ops = [re.sub(r'[^\w\s¿?¡!áéíóúüñÁÉÍÓÚÜÑ,.\-]', ' ', o).strip() for o in opciones]
+        limpio += ". Las opciones son: " + ". ".join(ops)
+    # Escapar comillas para JS
+    limpio_js = limpio.replace('\\', '').replace('"', "'")
+    components.html(f"""
+    <script>
+    (function(){{
+        var _tick = {counter};
+        if (!window.speechSynthesis) return;
+        window.speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance("{limpio_js}");
+        u.lang = 'es-MX';
+        u.rate = 0.82;
+        u.pitch = 1.15;
+        // Si las voces todavía no cargaron, esperar
+        function speak() {{
+            var voices = window.speechSynthesis.getVoices();
+            var es = voices.find(function(v) {{ return v.lang.startsWith('es'); }});
+            if (es) u.voice = es;
+            window.speechSynthesis.speak(u);
+        }}
+        if (window.speechSynthesis.getVoices().length > 0) {{
+            speak();
+        }} else {{
+            window.speechSynthesis.onvoiceschanged = speak;
+        }}
+    }})();
+    </script>
+    """, height=0, scrolling=False)
+
 
 # ===================== SELECCIÓN DE ESTUDIANTE =====================
 if st.session_state.phase == 'students':
@@ -234,16 +291,29 @@ elif st.session_state.phase == 'config':
         timer = st.select_slider("⏱️ Segundos por pregunta:", options=[10, 15, 20, 30, 45, 60, 90], value=default_time)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="card card-orange" style="text-align:center;">
-        <h3>♾️ Modo Infinito</h3>
-        <p>Las preguntas no se repiten. ¡Acumula XP y sube de nivel!</p>
-        <p>🔥 Cada acierto sube tu multiplicador: x2, x3, x4...</p>
-        <p>❌ Si fallas, el multiplicador vuelve a x1</p>
-    </div>
-    """, unsafe_allow_html=True)
+    col_modos = st.columns(2)
+    with col_modos[0]:
+        st.markdown("""
+        <div class="card card-orange" style="text-align:center;">
+            <h3>♾️ Modo Infinito</h3>
+            <p>Las preguntas no se repiten. ¡Acumula XP y sube de nivel!</p>
+            <p>🔥 Cada acierto sube tu multiplicador: x2, x3, x4...</p>
+            <p>❌ Si fallas, el multiplicador vuelve a x1</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_modos[1]:
+        st.markdown("""
+        <div class="card card-blue" style="text-align:center;">
+            <h3>📝 Modo Examen</h3>
+            <p>Responde todas las preguntas y entrega al final.</p>
+            <p>✏️ Selección única — Marque con X</p>
+            <p>📊 Recibes tu nota al entregar</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
+    n_exam = st.select_slider("📝 Preguntas para el examen:", options=[5, 10, 15, 20, 25, 30], value=10)
+
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("⬅️ Volver"):
             st.session_state.phase = 'materias'
@@ -266,6 +336,20 @@ elif st.session_state.phase == 'config':
                 st.session_state.current_topics = topics
                 st.session_state.dificultad = dif_sel
                 st.session_state.phase = 'quiz'
+                st.rerun()
+    with col3:
+        if st.button("📝 Modo Examen", type="secondary"):
+            if not temas:
+                st.error("¡Elige al menos un tema! 📚")
+            else:
+                gen = InfiniteGenerator(mat_info['generator'], temas, dif_sel)
+                preguntas_examen = [gen.next() for _ in range(n_exam)]
+                st.session_state.exam_questions = preguntas_examen
+                st.session_state.exam_submitted = False
+                st.session_state.exam_results = None
+                st.session_state.dificultad = dif_sel
+                st.session_state.current_topics = topics
+                st.session_state.phase = 'exam'
                 st.rerun()
 
 # ===================== QUIZ INFINITO =====================
@@ -310,18 +394,9 @@ elif st.session_state.phase == 'quiz':
     st.markdown(f'<div class="kahoot-q">{q["question"]}</div>', unsafe_allow_html=True)
 
     # Imágenes (solo cuando no se ha respondido)
+    # Las preguntas de comparar imagen2 se muestran directamente como botones abajo
     if not st.session_state.answered:
-        if q.get('imagen2'):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**Imagen 1**")
-                try: st.image(q['imagen'], width='stretch')
-                except: pass
-            with c2:
-                st.markdown("**Imagen 2**")
-                try: st.image(q['imagen2'], width='stretch')
-                except: pass
-        elif q.get('imagen'):
+        if not q.get('imagen2') and q.get('imagen'):
             try: st.image(q['imagen'], width='stretch')
             except: pass
 
@@ -333,6 +408,26 @@ elif st.session_state.phase == 'quiz':
                         font-size:1rem; font-style:italic; color:#333;">
                 {q['texto_comparar']}
             </div>""", unsafe_allow_html=True)
+
+        # ── TTS para ABBY ──
+        if st.session_state.student == 'ABBY':
+            _qid_now = q.get('_qid', hash(q['question']))
+            _should_speak = False
+            if _qid_now != st.session_state.get('last_spoken_qid'):
+                _should_speak = True
+                st.session_state.last_spoken_qid = _qid_now
+                st.session_state.force_speak = False
+            elif st.session_state.get('force_speak'):
+                _should_speak = True
+                st.session_state.force_speak = False
+                st.session_state.speak_counter = st.session_state.get('speak_counter', 0) + 1
+            if _should_speak:
+                # Para imágenes no leer opciones (son "Imagen 1/2", no tiene sentido)
+                _ops_tts = [] if q.get('imagen2') else q.get('opciones_btn', [])
+                _tts_abby(q['question'], _ops_tts, counter=st.session_state.get('speak_counter', 0))
+            if st.button("🔊 Escuchar pregunta de nuevo", key=f"tts_replay_{sc['total']}"):
+                st.session_state.force_speak = True
+                st.rerun()
 
     # --- RESPONDER ---
     if not st.session_state.answered:
@@ -350,12 +445,29 @@ elif st.session_state.phase == 'quiz':
             st.session_state.answered = True
 
         opciones = q.get('opciones_btn', [])
-        cols = st.columns(2)
-        for i_btn, opcion in enumerate(opciones):
-            with cols[i_btn % 2]:
-                if st.button(opcion, key=f"opt_{sc['total']}_{i_btn}", type="primary", width='stretch'):
-                    _submit(opcion)
+
+        # Preguntas de comparar imágenes → las imágenes mismas son los botones
+        if q.get('imagen2') and set(opciones) == {"Imagen 1", "Imagen 2"}:
+            ci1, ci2 = st.columns(2)
+            with ci1:
+                try: st.image(q['imagen'], width='stretch')
+                except: pass
+                if st.button("✓ Esta imagen", key=f"opt_{sc['total']}_0", type="primary", width='stretch'):
+                    _submit("Imagen 1")
                     st.rerun()
+            with ci2:
+                try: st.image(q['imagen2'], width='stretch')
+                except: pass
+                if st.button("✓ Esta imagen", key=f"opt_{sc['total']}_1", type="primary", width='stretch'):
+                    _submit("Imagen 2")
+                    st.rerun()
+        else:
+            cols = st.columns(2)
+            for i_btn, opcion in enumerate(opciones):
+                with cols[i_btn % 2]:
+                    if st.button(opcion, key=f"opt_{sc['total']}_{i_btn}", type="primary", width='stretch'):
+                        _submit(opcion)
+                        st.rerun()
 
         # Timer expire
         if remaining <= 0 and not st.session_state.answered:
@@ -498,6 +610,199 @@ elif st.session_state.phase == 'results':
             st.rerun()
     with r2c2:
         if st.button("🏠 Inicio", width='stretch'):
+            go_home()
+            st.rerun()
+
+# ===================== EXAMEN — MARQUE CON X =====================
+elif st.session_state.phase == 'exam':
+    nombre = st.session_state.student
+    info = ESTUDIANTES[nombre]
+    materia = st.session_state.materia
+    preguntas = st.session_state.exam_questions
+    LETRAS = ["A", "B", "C", "D", "E", "F"]
+
+    st.markdown(f"""
+    <div class="exam-header">
+        <h2>{info['emoji']} Examen — {materia}</h2>
+        <p><b>Estudiante:</b> {nombre} &nbsp;|&nbsp; <b>Fecha:</b> {time.strftime('%d/%m/%Y')} &nbsp;|&nbsp; <b>Preguntas:</b> {len(preguntas)}</p>
+    </div>
+    <div class="exam-instrucciones">
+        ✏️ <b>Instrucciones:</b> Marque con <b>X</b> la respuesta correcta. Solo puede seleccionar <b>una</b> opción por pregunta.
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_back, col_submit = st.columns([1, 2])
+    with col_back:
+        if st.button("⬅️ Cancelar"):
+            st.session_state.phase = 'config'
+            st.rerun()
+
+    respuestas_seleccionadas = {}
+
+    with st.form("exam_form"):
+        for i, q in enumerate(preguntas):
+            opciones_orig = q.get('opciones_btn', [])
+            opciones_labeled = [f"{LETRAS[j]})  {opciones_orig[j]}" for j in range(len(opciones_orig))]
+
+            st.markdown(f"""
+            <div class="exam-pregunta">
+                <div class="num">Pregunta {i + 1}</div>
+                <div class="texto">{q['question']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Imagen(s) si existen
+            if q.get('imagen2'):
+                ci1, ci2 = st.columns(2)
+                with ci1:
+                    st.caption("Imagen 1")
+                    try: st.image(q['imagen'], width='stretch')
+                    except: pass
+                with ci2:
+                    st.caption("Imagen 2")
+                    try: st.image(q['imagen2'], width='stretch')
+                    except: pass
+            elif q.get('imagen'):
+                try: st.image(q['imagen'], width='stretch')
+                except: pass
+
+            if q.get('texto_comparar'):
+                st.markdown(f"""
+                <div style="background:#f0f0ff; border-left:4px solid #9b59b6;
+                            padding:10px 14px; border-radius:8px; margin:6px 0;
+                            font-size:0.95rem; font-style:italic; color:#333;">
+                    {q['texto_comparar']}
+                </div>""", unsafe_allow_html=True)
+
+            sel = st.radio(
+                label=f"q{i}",
+                options=opciones_labeled,
+                index=None,
+                key=f"exam_radio_{i}",
+                label_visibility="collapsed",
+            )
+            respuestas_seleccionadas[i] = sel
+            st.write("")
+
+        submitted = st.form_submit_button("📤 Entregar Examen", type="primary", use_container_width=True)
+
+    if submitted:
+        resultados = []
+        for i, q in enumerate(preguntas):
+            sel_labeled = respuestas_seleccionadas.get(i)
+            if sel_labeled is None:
+                respuesta_limpia = None
+            else:
+                # Quitar prefijo "A)  " para comparar
+                respuesta_limpia = sel_labeled.split(")  ", 1)[-1].strip() if ")  " in sel_labeled else sel_labeled
+            correcto = check_answer(q, respuesta_limpia) if respuesta_limpia else False
+            resultados.append({
+                "pregunta": q['question'],
+                "opciones": q.get('opciones_btn', []),
+                "respuesta_correcta": q['answer'],
+                "seleccionada": respuesta_limpia,
+                "correcto": correcto,
+                "procedure": q.get('procedure', ''),
+            })
+        st.session_state.exam_results = resultados
+        st.session_state.exam_submitted = True
+        st.session_state.phase = 'exam_results'
+        st.rerun()
+
+# ===================== RESULTADOS DEL EXAMEN =====================
+elif st.session_state.phase == 'exam_results':
+    nombre = st.session_state.student
+    info = ESTUDIANTES[nombre]
+    materia = st.session_state.materia
+    resultados = st.session_state.exam_results
+    LETRAS = ["A", "B", "C", "D", "E", "F"]
+
+    total = len(resultados)
+    correctas = sum(1 for r in resultados if r['correcto'])
+    vacias = sum(1 for r in resultados if r['seleccionada'] is None)
+    pct = int(100 * correctas / total) if total else 0
+
+    if pct >= 80:
+        st.markdown('<div class="confetti">🎉🌟🏆🌟🎉</div>', unsafe_allow_html=True)
+        st.balloons()
+
+    st.markdown(f'<div class="hero" style="font-size:2rem;">{info["emoji"]} Resultados del Examen — {materia}</div>', unsafe_allow_html=True)
+
+    score_cls = "score-green" if pct >= 80 else ("score-yellow" if pct >= 60 else "score-red")
+    nota_letra = "A" if pct >= 90 else ("B" if pct >= 80 else ("C" if pct >= 70 else ("D" if pct >= 60 else "F")))
+    st.markdown(f"""
+    <div class="score-box {score_cls}">
+        <div class="score-num">{pct}%</div>
+        <div style="font-size:1.5rem; font-weight:bold;">Nota: {nota_letra}</div>
+        <div style="font-size:1.1rem;">✅ {correctas} correctas &nbsp;|&nbsp; ❌ {total - correctas - vacias} incorrectas &nbsp;|&nbsp; ⬜ {vacias} sin responder</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if pct >= 90:
+        st.success(f"🌟 ¡EXCELENTE {nombre}! ¡Dominas esta materia! 🧠✨")
+    elif pct >= 80:
+        st.success(f"😊 ¡Muy bien {nombre}! Casi perfecto. 💪")
+    elif pct >= 60:
+        st.warning(f"🤔 Vas bien {nombre}, pero hay preguntas que repasar. 📖")
+    else:
+        st.error(f"📚 {nombre}, necesitas practicar más. ¡Cada intento te hace mejor! 💪")
+
+    st.write("")
+    st.markdown("### 📋 Corrección del Examen")
+
+    for i, r in enumerate(resultados):
+        opciones = r['opciones']
+        correcta = r['respuesta_correcta']
+        seleccionada = r['seleccionada']
+
+        # Identificar letra correcta y letra seleccionada
+        letra_correcta = next((LETRAS[j] for j, o in enumerate(opciones) if check_answer({'answer': correcta, 'is_numeric': False}, o)), "?")
+        if seleccionada:
+            letra_sel = next((LETRAS[j] for j, o in enumerate(opciones) if o == seleccionada), "?")
+        else:
+            letra_sel = None
+
+        if r['correcto']:
+            css_class = "exam-result-correct"
+            icono = "✅"
+        elif seleccionada is None:
+            css_class = "exam-result-empty"
+            icono = "⬜"
+        else:
+            css_class = "exam-result-wrong"
+            icono = "❌"
+
+        opciones_html = " &nbsp; ".join(
+            f"<b style='color:#28a745;'>[X] {LETRAS[j]}) {o}</b>" if o == correcta else
+            (f"<s style='color:#dc3545;'>{LETRAS[j]}) {o}</s>" if o == seleccionada else f"{LETRAS[j]}) {o}")
+            for j, o in enumerate(opciones)
+        )
+
+        st.markdown(f"""
+        <div class="{css_class}">
+            <b>{icono} {i+1}. {r['pregunta']}</b><br>
+            <span style="font-size:0.9rem;">{opciones_html}</span>
+            {"" if r['correcto'] else f"<br><span style='font-size:0.85rem; color:#666;'>Marcaste: <b>{letra_sel}) {seleccionada}</b> &nbsp;→&nbsp; Correcta: <b>{letra_correcta}) {correcta}</b></span>" if seleccionada else f"<br><span style='font-size:0.85rem; color:#666;'>Sin responder. Correcta: <b>{letra_correcta}) {correcta}</b></span>"}
+        </div>
+        """, unsafe_allow_html=True)
+
+        if r.get('procedure') and not r['correcto']:
+            with st.expander(f"📐 Ver explicación — pregunta {i+1}"):
+                st.markdown(r['procedure'])
+
+    st.write("")
+    r1c1, r1c2, r1c3 = st.columns(3)
+    with r1c1:
+        if st.button("🔄 Hacer otro examen", type="primary"):
+            st.session_state.phase = 'config'
+            st.session_state.exam_submitted = False
+            st.rerun()
+    with r1c2:
+        if st.button("📚 Otra materia"):
+            st.session_state.phase = 'materias'
+            st.rerun()
+    with r1c3:
+        if st.button("🏠 Inicio"):
             go_home()
             st.rerun()
 
