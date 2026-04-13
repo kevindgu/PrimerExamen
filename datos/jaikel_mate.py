@@ -27,10 +27,9 @@ def _num_texto(n):
         prefix = 'mil' if mil == 1 else f"{_num_texto(mil)} mil"
         return prefix if rem == 0 else f"{prefix} {_num_texto(rem)}"
     if n < 100000:
-        dm, rem = divmod(n, 10000)
-        prefix = f"{_num_texto(dm * 10)} mil" if dm > 0 else ''
-        resto = _num_texto(rem) if rem > 0 else ''
-        return f"{prefix} {resto}".strip() if prefix else resto
+        miles, rem = divmod(n, 1000)
+        prefix = f"{_num_texto(miles)} mil"
+        return prefix if rem == 0 else f"{prefix} {_num_texto(rem)}"
     return str(n)
 
 _ORDINALES = {
@@ -187,27 +186,98 @@ def _gen_ordinales():
             "procedure": f"Posición {_ORDINALES[pos]} ({pos}°) = **{correcto}**"}
 
 
+def _distractores_numericos(n, cantidad=3):
+    """
+    Genera distractores TRAMPA lingüísticos: números que suenan parecido a n
+    en español pero son distintos, confundiendo el valor posicional.
+
+    Prioridades (de mayor a menor confusión para el estudiante):
+      1. Intercambio de dígitos adyacentes  → "cuarenta mil ochenta" vs "cuarenta mil ochocientos"
+      2. Escala: ÷10 o ÷100 en rango       → "cuatro mil ochocientos" vs "cuarenta mil ochocientos"
+      3. Cambio de un dígito interior       → "cuarenta mil novecientos" vs "cuarenta mil ochocientos"
+      4. Cambio del primer dígito           → último recurso
+    """
+    lo, hi = 1000, 99999
+    s = str(n)
+    largo = len(s)
+    vistos = {n}
+    niveles = [[], [], [], []]  # 4 niveles de prioridad
+
+    # Nivel 0 — intercambio de dígitos adyacentes (más confuso lingüísticamente)
+    for i in range(largo - 1):
+        sw = list(s)
+        sw[i], sw[i + 1] = sw[i + 1], sw[i]
+        nueva = ''.join(sw)
+        if nueva[0] != '0':
+            v = int(nueva)
+            if lo <= v <= hi and v not in vistos:
+                niveles[0].append(v)
+                vistos.add(v)
+
+    # Nivel 1 — cambio de escala ÷10, ÷100 (confunde millar con decena, etc.)
+    for divisor in [10, 100]:
+        v = n // divisor
+        if lo <= v <= hi and v not in vistos:
+            niveles[1].append(v)
+            vistos.add(v)
+
+    # Nivel 2 — cambio de un dígito interior (no el primero)
+    for i in range(1, largo):
+        orig = int(s[i])
+        for nuevo_d in range(10):
+            if nuevo_d != orig:
+                nueva = s[:i] + str(nuevo_d) + s[i + 1:]
+                v = int(nueva)
+                if lo <= v <= hi and v not in vistos:
+                    niveles[2].append(v)
+                    vistos.add(v)
+
+    # Nivel 3 — cambio del primer dígito (último recurso)
+    for nuevo_d in range(1, 10):
+        if str(nuevo_d) != s[0]:
+            nueva = str(nuevo_d) + s[1:]
+            v = int(nueva)
+            if lo <= v <= hi and v not in vistos:
+                niveles[3].append(v)
+                vistos.add(v)
+
+    # Combinar en orden de prioridad
+    candidatos = []
+    for nivel in niveles:
+        random.shuffle(nivel)
+        candidatos.extend(nivel)
+        if len(candidatos) >= cantidad:
+            break
+
+    return candidatos[:cantidad]
+
+
 def _gen_lectura_escritura():
     tipo = random.choice(['num_a_texto', 'texto_a_num'])
 
     n = random.randint(1000, 99999)
     txt = _num_texto(n)
 
+    # Distractores trampa: números con estructura similar, NO aleatorios
+    trampas = _distractores_numericos(n)
+
     if tipo == 'num_a_texto':
-        otros_n = random.sample([x for x in range(1000, 99999) if x != n], 3)
-        otros_txt = [_num_texto(x) for x in otros_n]
+        # El texto correcto vs textos de números similares (no textos aleatorios)
+        otros_txt = [_num_texto(x) for x in trampas]
         opciones = [txt] + otros_txt
         random.shuffle(opciones)
         return {"q": f"Escribe con letras el número {n:,}",
                 "answer": txt, "opciones": opciones,
-                "procedure": f"{n:,} = «**{txt}**»"}
+                "procedure": f"{n:,} = «**{txt}**»\n\n"
+                             f"⚠️ Ojo con: {trampas[0]:,} = «{_num_texto(trampas[0])}»"}
 
-    otros_n = random.sample([x for x in range(1000, 99999) if x != n], 3)
-    opciones = [str(n)] + [str(x) for x in otros_n]
+    # texto_a_num: el número correcto vs números con dígitos similares
+    opciones = [str(n)] + [str(x) for x in trampas]
     random.shuffle(opciones)
     return {"q": f"Escribe en número: «{txt}»",
             "answer": str(n), "opciones": opciones,
-            "procedure": f"«{txt}» = **{n:,}**"}
+            "procedure": f"«{txt}» = **{n:,}**\n\n"
+                         f"⚠️ Ojo con: {trampas[0]:,} ≠ {n:,} (diferente posición)"}
 
 
 def _gen_comparacion():
