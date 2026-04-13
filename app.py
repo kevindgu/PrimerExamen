@@ -7,7 +7,7 @@ from utils import ESTUDIANTES, DIFICULTADES, check_answer
 from scoring import new_score, record_answer, get_level, get_rank
 from infinite import InfiniteGenerator
 from leaderboard import (save_session, get_ranking, get_ranking_dificultad, get_ranking_materia,
-                         get_temas_stats, get_preguntas_debiles,
+                         get_temas_stats, get_preguntas_debiles, add_correction_xp,
                          get_player, LOGROS, DIFICULTADES_ORDEN, MATERIAS_ORDEN)
 from musica import MUSIC_HTML
 
@@ -734,6 +734,9 @@ elif st.session_state.phase == 'exam':
                 "topic": q.get('topic', ''),
                 "opciones": q.get('opciones_btn', []),
                 "respuesta_correcta": q['answer'],
+                "imagen": q.get('imagen', ''),
+                "imagen2": q.get('imagen2', ''),
+                "is_numeric": q.get('is_numeric', False),
                 "seleccionada": respuesta_limpia,
                 "correcto": correcto,
                 "procedure": q.get('procedure', ''),
@@ -872,6 +875,32 @@ elif st.session_state.phase == 'exam_results':
             with st.expander(f"📐 Ver explicación — pregunta {i+1}"):
                 st.markdown(r['procedure'])
 
+    # ── Ronda de corrección ──
+    _preguntas_malas = [r for r in resultados if not r['correcto'] and r['seleccionada'] is not None]
+    if _preguntas_malas and st.session_state.get('exam_session_saved'):
+        st.write("")
+        st.markdown(f"""
+        <div class="card card-orange" style="text-align:center;">
+            <div style="font-size:1.8rem;">✏️</div>
+            <div style="font-size:1.15rem; font-weight:bold; margin:6px 0;">
+                Ronda de corrección — {len(_preguntas_malas)} preguntas incorrectas
+            </div>
+            <div style="font-size:0.95rem; color:#555;">
+                Respóndelas bien y ganas <b>25 XP</b> por cada una (la mitad).<br>
+                Si la vuelves a poner mal: 0 puntos y siguiente.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("✏️ Iniciar ronda de corrección", type="primary", use_container_width=True):
+            st.session_state.correction_questions = _preguntas_malas
+            st.session_state.correction_idx = 0
+            st.session_state.correction_xp = 0
+            st.session_state.correction_results = []
+            st.session_state.correction_answered = False
+            st.session_state.correction_last_correct = None
+            st.session_state.phase = 'exam_correction'
+            st.rerun()
+
     st.write("")
     r1c1, r1c2, r1c3 = st.columns(3)
     with r1c1:
@@ -887,6 +916,174 @@ elif st.session_state.phase == 'exam_results':
         if st.button("🏠 Inicio"):
             go_home()
             st.rerun()
+
+# ===================== RONDA DE CORRECCIÓN =====================
+elif st.session_state.phase == 'exam_correction':
+    nombre = st.session_state.student
+    info = ESTUDIANTES[nombre]
+    materia = st.session_state.materia
+    cqs = st.session_state.correction_questions
+    cidx = st.session_state.correction_idx
+    LETRAS = ["A", "B", "C", "D", "E", "F"]
+
+    # Si ya terminamos todas las preguntas, pasar al resumen
+    if cidx >= len(cqs):
+        st.session_state.phase = 'exam_correction_done'
+        st.rerun()
+    else:
+        r = cqs[cidx]
+        total_cq = len(cqs)
+
+        st.markdown(f'<div class="hero" style="font-size:1.8rem;">{info["emoji"]} Ronda de Corrección</div>', unsafe_allow_html=True)
+
+        # Barra de progreso de la corrección
+        prog_pct = cidx / total_cq
+        st.markdown(f"""
+        <div class="exam-header">
+            <h2>✏️ Pregunta {cidx + 1} de {total_cq}</h2>
+            <p>Respóndela bien → <b style="color:#f39c12;">+25 XP</b> &nbsp;|&nbsp; Respuesta incorrecta → 0 XP</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.progress(prog_pct)
+
+        # Mostrar la respuesta que dio antes (equivocada)
+        sel_anterior = r.get('seleccionada', '')
+        if sel_anterior:
+            st.markdown(f"""
+            <div style="background:#fff3cd; border-left:4px solid #ffc107; border-radius:10px;
+                        padding:10px 15px; margin-bottom:10px; font-family:'Nunito',sans-serif;
+                        font-size:0.92rem; color:#856404;">
+                ⚠️ La vez anterior respondiste: <b>{sel_anterior}</b> — ¡estaba incorrecto!
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Pregunta
+        st.markdown(f'<div class="exam-pregunta"><div class="texto">❓ {r["pregunta"]}</div></div>', unsafe_allow_html=True)
+
+        # Imagen si hay
+        if r.get('imagen'):
+            st.image(r['imagen'])
+        if r.get('imagen2'):
+            st.image(r['imagen2'])
+
+        opciones = r['opciones']
+
+        # Si ya respondió en esta pasada, mostrar resultado
+        if st.session_state.get('correction_answered'):
+            fue_correcto = st.session_state.correction_last_correct
+            if fue_correcto:
+                st.markdown("""
+                <div style="background:#d4edda; border-left:5px solid #28a745; border-radius:10px;
+                            padding:14px 18px; text-align:center; font-size:1.2rem; font-weight:bold; color:#155724;">
+                    ✅ ¡Correcto! +25 XP
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                correcta = r['respuesta_correcta']
+                st.markdown(f"""
+                <div style="background:#f8d7da; border-left:5px solid #dc3545; border-radius:10px;
+                            padding:14px 18px; text-align:center; font-size:1.1rem; font-weight:bold; color:#721c24;">
+                    ❌ Incorrecto — 0 XP<br>
+                    <span style="font-size:0.95rem; font-weight:normal;">La respuesta correcta era: <b>{correcta}</b></span>
+                </div>
+                """, unsafe_allow_html=True)
+            st.write("")
+            lbl_sig = "➡️ Siguiente" if cidx + 1 < total_cq else "🏁 Ver resumen"
+            if st.button(lbl_sig, type="primary", use_container_width=True):
+                st.session_state.correction_idx += 1
+                st.session_state.correction_answered = False
+                st.session_state.correction_last_correct = None
+                st.rerun()
+        else:
+            # Mostrar opciones como radio
+            op_labels = [f"{LETRAS[j]}) {o}" for j, o in enumerate(opciones)]
+            respuesta_sel = st.radio("Selecciona la respuesta correcta:", op_labels,
+                                     index=None, key=f"corr_radio_{cidx}")
+            st.write("")
+            if st.button("✅ Confirmar respuesta", type="primary", use_container_width=True,
+                         disabled=(respuesta_sel is None)):
+                # Extraer el texto de la opción seleccionada
+                idx_sel = op_labels.index(respuesta_sel) if respuesta_sel else -1
+                texto_sel = opciones[idx_sel] if idx_sel >= 0 else ""
+                # Verificar
+                fue_correcto = check_answer({'answer': r['respuesta_correcta'],
+                                             'is_numeric': r.get('is_numeric', False)}, texto_sel)
+                xp_ganado = 25 if fue_correcto else 0
+                st.session_state.correction_xp += xp_ganado
+                st.session_state.correction_results.append({
+                    "pregunta": r['pregunta'],
+                    "correcto": fue_correcto,
+                    "xp_ganado": xp_ganado,
+                    "respuesta_dada": texto_sel,
+                    "respuesta_correcta": r['respuesta_correcta'],
+                })
+                st.session_state.correction_answered = True
+                st.session_state.correction_last_correct = fue_correcto
+                st.rerun()
+
+
+# ===================== FIN RONDA DE CORRECCIÓN =====================
+elif st.session_state.phase == 'exam_correction_done':
+    nombre = st.session_state.student
+    info = ESTUDIANTES[nombre]
+    materia = st.session_state.materia
+    cresults = st.session_state.get('correction_results', [])
+    total_xp_corr = st.session_state.get('correction_xp', 0)
+    total_cq = len(cresults)
+    bien_corr = sum(1 for c in cresults if c['correcto'])
+
+    # Guardar el XP extra (una sola vez)
+    if not st.session_state.get('correction_xp_saved'):
+        add_correction_xp(nombre, total_xp_corr, materia)
+        st.session_state.correction_xp_saved = True
+
+    if bien_corr == total_cq and total_cq > 0:
+        st.markdown('<div class="confetti">🎉✨🎉</div>', unsafe_allow_html=True)
+
+    st.markdown(f'<div class="hero" style="font-size:1.8rem;">{info["emoji"]} Corrección completada</div>', unsafe_allow_html=True)
+    st.write("")
+
+    pct_corr = int(100 * bien_corr / total_cq) if total_cq else 0
+    score_cls = "score-green" if pct_corr >= 70 else ("score-yellow" if pct_corr >= 40 else "score-red")
+    st.markdown(f"""
+    <div class="score-box {score_cls}">
+        <div class="score-num">+{total_xp_corr} XP</div>
+        <div style="font-size:1.3rem; font-weight:bold;">
+            ✅ {bien_corr} de {total_cq} corregidas correctamente
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Detalle de cada pregunta corregida
+    st.markdown("### Resumen de correcciones")
+    for c in cresults:
+        if c['correcto']:
+            st.markdown(f"""
+            <div class="exam-result-correct">
+                ✅ <b>+25 XP</b> — {c['pregunta'][:100]}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="exam-result-wrong">
+                ❌ <b>0 XP</b> — {c['pregunta'][:100]}<br>
+                <span style="font-size:0.85rem;">Respondiste: <b>{c['respuesta_dada']}</b>
+                &nbsp;→&nbsp; Correcta: <b>{c['respuesta_correcta']}</b></span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.write("")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Nuevo examen", type="primary"):
+            st.session_state.phase = 'config'
+            st.session_state.exam_submitted = False
+            st.rerun()
+    with col2:
+        if st.button("🏠 Inicio"):
+            go_home()
+            st.rerun()
+
 
 # ===================== TABLA DE PUNTUACIONES =====================
 elif st.session_state.phase == 'leaderboard':

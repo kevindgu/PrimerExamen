@@ -264,3 +264,19 @@ def get_ranking_dificultad(dificultad):
             "logros": stats["logros"],
         })
     return sorted(ranking, key=lambda x: x["xp_total"], reverse=True)
+
+
+def add_correction_xp(nombre, xp_extra, materia):
+    """Agrega XP de la ronda de correccion sin contar como sesion nueva."""
+    if xp_extra <= 0:
+        return
+    data = _load()
+    if nombre not in data:
+        return
+    p = data[nombre]
+    p["xp_total"] += xp_extra
+    p["mejor_sesion_xp"] = max(p.get("mejor_sesion_xp", 0), xp_extra)
+    if materia in p.get("por_materia", {}):
+        p["por_materia"][materia]["xp_total"] += xp_extra
+    data[nombre] = p
+    _save(data)
