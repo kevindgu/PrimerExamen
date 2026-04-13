@@ -309,7 +309,7 @@ elif st.session_state.phase == 'config':
             <h3>📝 Modo Examen</h3>
             <p>Responde todas las preguntas y entrega al final.</p>
             <p>✏️ Selección única — Marque con X</p>
-            <p>📊 Recibes tu nota al entregar</p>
+            <p>🔴 Siempre en dificultad <b>Difícil</b></p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -346,11 +346,13 @@ elif st.session_state.phase == 'config':
             if not temas:
                 st.error("¡Elige al menos un tema! 📚")
             else:
-                gen = InfiniteGenerator(mat_info['generator'], temas, dif_sel)
+                # El examen siempre usa Difícil para mayor reto
+                gen = InfiniteGenerator(mat_info['generator'], temas, "Difícil")
                 preguntas_examen = [gen.next() for _ in range(n_exam)]
                 st.session_state.exam_questions = preguntas_examen
                 st.session_state.exam_submitted = False
                 st.session_state.exam_results = None
+                st.session_state.exam_session_saved = False
                 st.session_state.dificultad = dif_sel
                 st.session_state.current_topics = topics
                 st.session_state.phase = 'exam'
@@ -729,6 +731,7 @@ elif st.session_state.phase == 'exam':
             correcto = check_answer(q, respuesta_limpia) if respuesta_limpia else False
             resultados.append({
                 "pregunta": q['question'],
+                "topic": q.get('topic', ''),
                 "opciones": q.get('opciones_btn', []),
                 "respuesta_correcta": q['answer'],
                 "seleccionada": respuesta_limpia,
@@ -752,6 +755,54 @@ elif st.session_state.phase == 'exam_results':
     correctas = sum(1 for r in resultados if r['correcto'])
     vacias = sum(1 for r in resultados if r['seleccionada'] is None)
     pct = int(100 * correctas / total) if total else 0
+
+    # ── Guardar examen en leaderboard (una sola vez) ──
+    if not st.session_state.get('exam_session_saved'):
+        # Calcular racha máxima
+        _max_racha, _racha = 0, 0
+        for r in resultados:
+            if r['correcto']:
+                _racha += 1
+                _max_racha = max(_max_racha, _racha)
+            else:
+                _racha = 0
+
+        _exam_score = {
+            'xp': correctas * 50,       # 50 XP planos por correcta, sin multiplicador
+            'correct': correctas,
+            'total': total,
+            'max_streak': _max_racha,
+            'max_multiplier': 1,
+            'history': [(i, r['correcto']) for i, r in enumerate(resultados)],
+        }
+
+        # Preguntas fallidas (solo las que respondió mal, no las vacías)
+        _fallidas = [
+            {
+                "fecha": time.strftime("%d/%m/%Y"),
+                "materia": materia,
+                "topic": r.get('topic', ''),
+                "pregunta": r['pregunta'][:150],
+                "respuesta_dada": r.get('seleccionada') or '(sin responder)',
+                "respuesta_correcta": r['respuesta_correcta'],
+            }
+            for r in resultados if not r['correcto']
+        ]
+
+        # Stats por tema del examen
+        _topic_stats = {}
+        for r in resultados:
+            _tp = r.get('topic', 'General')
+            _cl = f"{materia}::{_tp}"
+            if _cl not in _topic_stats:
+                _topic_stats[_cl] = {"materia": materia, "topic": _tp, "intentos": 0, "correctas": 0}
+            _topic_stats[_cl]["intentos"] += 1
+            if r['correcto']:
+                _topic_stats[_cl]["correctas"] += 1
+
+        save_session(nombre, _exam_score, materia, materia, "Difícil",
+                     preguntas_fallidas=_fallidas, topic_stats_sesion=_topic_stats)
+        st.session_state.exam_session_saved = True
 
     if pct >= 80:
         st.markdown('<div class="confetti">🎉🌟🏆🌟🎉</div>', unsafe_allow_html=True)
