@@ -313,7 +313,7 @@ elif st.session_state.phase == 'config':
         </div>
         """, unsafe_allow_html=True)
 
-    n_exam = st.select_slider("📝 Preguntas para el examen:", options=[5, 10, 15, 20, 25, 30], value=10)
+    n_exam = st.select_slider("📝 Preguntas para el examen:", options=[30, 35, 40, 45, 50], value=30)
 
     col1, col2, col3 = st.columns(3)
     with col1:
