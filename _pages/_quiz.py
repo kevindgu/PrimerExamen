@@ -37,7 +37,7 @@ def _tts_abby(texto, opciones=None, counter=0):
     """, height=0, scrolling=False)
 
 
-def render():
+def render(lang="es"):
     q = st.session_state.current_q
     sc = st.session_state.score
     level, level_xp, level_needed = get_level(sc['xp'])
@@ -145,24 +145,28 @@ def _submit(q, sc, ans):
 def _render_answer_buttons(q, sc, remaining):
     opciones = q.get('opciones_btn', [])
     if q.get('imagen2') and set(opciones) == {"Imagen 1", "Imagen 2"}:
+        _key_base = f"{sc['total']}_{hash(q.get('question',''))%10000}"
         ci1, ci2 = st.columns(2)
         with ci1:
             try: st.image(q['imagen'], use_container_width=True)
             except: pass
-            if st.button("✓ Esta imagen", key=f"opt_{sc['total']}_0", type="primary", use_container_width=True):
+            if st.button("✓ Esta imagen", key=f"opt_{_key_base}_0", type="primary", use_container_width=True):
                 _submit(q, sc, "Imagen 1"); st.rerun()
         with ci2:
             try: st.image(q['imagen2'], use_container_width=True)
             except: pass
-            if st.button("✓ Esta imagen", key=f"opt_{sc['total']}_1", type="primary", use_container_width=True):
+            if st.button("✓ Esta imagen", key=f"opt_{_key_base}_1", type="primary", use_container_width=True):
                 _submit(q, sc, "Imagen 2"); st.rerun()
     else:
-        for i_btn in range(0, len(opciones), 2):
+        n_opts = len(opciones)
+        # Usar un key basado en total+hash para evitar duplicados en reruns
+        _key_base = f"{sc['total']}_{hash(q.get('question',''))%10000}"
+        for i_btn in range(0, n_opts, 2):
             row = opciones[i_btn:i_btn+2]
             cols = st.columns(len(row))
             for j, opcion in enumerate(row):
                 with cols[j]:
-                    if st.button(opcion, key=f"opt_{sc['total']}_{i_btn+j}", type="primary", use_container_width=True):
+                    if st.button(opcion, key=f"opt_{_key_base}_{i_btn+j}", type="primary", use_container_width=True):
                         _submit(q, sc, opcion); st.rerun()
 
     if remaining <= 0 and not st.session_state.answered:

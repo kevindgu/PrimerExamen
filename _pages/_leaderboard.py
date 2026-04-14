@@ -44,7 +44,7 @@ def _render_ranking(ranking, mostrar_mult=True):
         """, unsafe_allow_html=True)
 
 
-def render(go_home_fn):
+def render(go_home_fn, lang="es"):
     st.markdown('<div class="hero" style="font-size:2.5rem;">🏆 Tabla de Puntuaciones</div>', unsafe_allow_html=True)
     st.write("")
 

@@ -5,7 +5,7 @@ from scoring import new_score
 from infinite import InfiniteGenerator
 
 
-def render():
+def render(lang="es"):
     nombre = st.session_state.student
     info = ESTUDIANTES[nombre]
     materia = st.session_state.materia

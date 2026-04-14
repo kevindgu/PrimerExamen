@@ -7,7 +7,7 @@ from leaderboard import save_session, add_correction_xp
 LETRAS = ["A", "B", "C", "D", "E", "F"]
 
 
-def render_exam():
+def render_exam(lang="es"):
     nombre = st.session_state.student
     info = ESTUDIANTES[nombre]
     materia = st.session_state.materia
@@ -81,7 +81,7 @@ def render_exam():
         st.rerun()
 
 
-def render_exam_results(go_home_fn):
+def render_exam_results(go_home_fn, lang="es"):
     nombre = st.session_state.student
     info = ESTUDIANTES[nombre]
     materia = st.session_state.materia
@@ -200,7 +200,7 @@ def render_exam_results(go_home_fn):
             go_home_fn(); st.rerun()
 
 
-def render_exam_correction():
+def render_exam_correction(lang="es"):
     nombre = st.session_state.student
     info = ESTUDIANTES[nombre]
     cqs = st.session_state.correction_questions
@@ -266,7 +266,7 @@ def render_exam_correction():
             st.rerun()
 
 
-def render_exam_correction_done(go_home_fn):
+def render_exam_correction_done(go_home_fn, lang="es"):
     nombre = st.session_state.student
     info = ESTUDIANTES[nombre]
     materia = st.session_state.materia
