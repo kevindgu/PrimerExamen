@@ -2,7 +2,7 @@
 import time
 import streamlit as st
 from utils import ESTUDIANTES, check_answer
-from leaderboard import save_session, add_correction_xp
+from leaderboard import save_session, add_correction_xp, save_exam_progress, get_exam_progress, clear_exam_progress
 
 LETRAS = ["A", "B", "C", "D", "E", "F"]
 
@@ -12,6 +12,36 @@ def render_exam(lang="es"):
     info = ESTUDIANTES[nombre]
     materia = st.session_state.materia
     preguntas = st.session_state.exam_questions
+
+    # Detectar examen previo en progreso
+    if not st.session_state.get('exam_resume_checked'):
+        st.session_state.exam_resume_checked = True
+        progreso = get_exam_progress(nombre)
+        if progreso and progreso.get('materia') == materia:
+            respondidas = progreso.get('respondidas', 0)
+            total_prev = progreso.get('total', 0)
+            st.markdown(f"""
+            <div class="card card-orange" style="text-align:center;">
+                <div style="font-size:2rem;">📝</div>
+                <h3>Tienes un examen en progreso</h3>
+                <p><b>{materia}</b> — {respondidas} de {total_prev} preguntas respondidas</p>
+                <p style="color:#888; font-size:0.85rem;">Guardado el {progreso.get('fecha','')}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("▶️ Continuar examen", type="primary", use_container_width=True):
+                    # Restaurar preguntas y respuestas guardadas
+                    st.session_state.exam_questions = progreso['preguntas']
+                    st.session_state.exam_respuestas_guardadas = progreso['respuestas']
+                    st.session_state.exam_resume_checked = True
+                    st.rerun()
+            with col2:
+                if st.button("🆕 Nuevo examen", use_container_width=True):
+                    clear_exam_progress(nombre)
+                    st.session_state.exam_resume_checked = True
+                    st.rerun()
+            return
 
     st.markdown(f"""
     <div class="exam-header">
@@ -24,8 +54,12 @@ def render_exam(lang="es"):
     """, unsafe_allow_html=True)
 
     if st.button("⬅️ Cancelar"):
+        clear_exam_progress(nombre)
         st.session_state.phase = 'config'
         st.rerun()
+
+    # Recuperar respuestas guardadas si venimos de un resume
+    respuestas_previas = st.session_state.pop('exam_respuestas_guardadas', {})
 
     respuestas = {}
     with st.form("exam_form"):
@@ -56,12 +90,34 @@ def render_exam(lang="es"):
                     padding:10px 14px; border-radius:8px; margin:6px 0;
                     font-size:0.95rem; font-style:italic; color:#333;">{q['texto_comparar']}</div>""",
                     unsafe_allow_html=True)
-            respuestas[i] = st.radio(label=f"q{i}", options=opciones_labeled, index=None,
+
+            # Preseleccionar respuesta guardada si existe
+            prev_resp = respuestas_previas.get(str(i))
+            prev_idx = None
+            if prev_resp and prev_resp in opciones_labeled:
+                prev_idx = opciones_labeled.index(prev_resp)
+
+            respuestas[i] = st.radio(label=f"q{i}", options=opciones_labeled,
+                                     index=prev_idx,
                                      key=f"exam_radio_{i}", label_visibility="collapsed")
             st.write("")
-        submitted = st.form_submit_button("📤 Entregar Examen", type="primary", use_container_width=True)
+
+        col_save, col_submit = st.columns(2)
+        with col_save:
+            guardar = st.form_submit_button("💾 Guardar y salir", use_container_width=True)
+        with col_submit:
+            submitted = st.form_submit_button("📤 Entregar Examen", type="primary", use_container_width=True)
+
+    if guardar:
+        # Guardar progreso y salir
+        resp_serializable = {str(i): respuestas.get(i) for i in range(len(preguntas))}
+        save_exam_progress(nombre, materia, preguntas, resp_serializable)
+        st.success("💾 Examen guardado. Puedes retomarlo cuando quieras.")
+        st.session_state.phase = 'materias'
+        st.rerun()
 
     if submitted:
+        clear_exam_progress(nombre)
         resultados = []
         for i, q in enumerate(preguntas):
             sel = respuestas.get(i)

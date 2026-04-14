@@ -403,3 +403,37 @@ def add_correction_xp(nombre: str, xp_extra: int, materia: str):
         p["por_materia"][materia]["xp_total"] += xp_extra
     data[nombre] = p
     _save(data)
+
+
+# ── Examen en progreso ────────────────────────────────────────
+
+def save_exam_progress(nombre: str, materia: str, preguntas: list, respuestas: dict):
+    """Guarda el estado actual del examen para poder retomarlo."""
+    data = _load()
+    if nombre not in data:
+        data[nombre] = _player_default()
+    p = _migrate(data[nombre])
+    p["examen_en_progreso"] = {
+        "materia": materia,
+        "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "preguntas": preguntas,
+        "respuestas": respuestas,
+        "total": len(preguntas),
+        "respondidas": sum(1 for v in respuestas.values() if v is not None),
+    }
+    data[nombre] = p
+    _save(data)
+
+
+def get_exam_progress(nombre: str) -> dict | None:
+    """Retorna el examen en progreso si existe, None si no."""
+    data = _load()
+    return data.get(nombre, {}).get("examen_en_progreso")
+
+
+def clear_exam_progress(nombre: str):
+    """Borra el examen en progreso al entregar o cancelar."""
+    data = _load()
+    if nombre in data and "examen_en_progreso" in data[nombre]:
+        del data[nombre]["examen_en_progreso"]
+        _save(data)
