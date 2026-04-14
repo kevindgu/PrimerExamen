@@ -1,10 +1,64 @@
-"""Sistema de tabla de puntuaciones — almacenamiento exclusivo en Google Sheets."""
+"""
+Sistema de tabla de puntuaciones.
+- Almacenamiento primario: Google Sheets
+- Fallback automático: JSON local (scores_local.json)
+- Caché en memoria para evitar llamadas repetidas
+- Fórmula de puntuación balanceada
+- Separación Modo Infinito / Modo Examen
+"""
 import json
+import os
+import math
+import time
 from datetime import datetime
 
+# ── Fallback local ────────────────────────────────────────────
+_LOCAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scores_local.json")
 
-# ── Google Sheets (almacenamiento principal y unico) ─────────────────────────
+# ── Caché en memoria ──────────────────────────────────────────
+_cache: dict = {}
+_cache_ts: float = 0.0
+_CACHE_TTL = 30  # segundos antes de refrescar desde Sheets
 
+DIFICULTADES_ORDEN = ["Fácil", "Normal", "Difícil", "💀 Super Difícil", "☠️ Mega Difícil"]
+MATERIAS_ORDEN = ["Matemáticas", "Ciencias", "Estudios Sociales", "Español"]
+
+LOGROS = [
+    {"id": "primera_vez",    "emoji": "🐣", "nombre": "Primera vez",    "desc": "Completar tu primera sesión",            "cond": lambda s: s["sesiones"] >= 1},
+    {"id": "racha_5",        "emoji": "🔥", "nombre": "En llamas",       "desc": "Racha de 5 respuestas correctas",        "cond": lambda s: s["max_racha"] >= 5},
+    {"id": "racha_10",       "emoji": "💥", "nombre": "Imparable",       "desc": "Racha de 10 respuestas correctas",       "cond": lambda s: s["max_racha"] >= 10},
+    {"id": "racha_20",       "emoji": "⚡", "nombre": "Rayo",            "desc": "Racha de 20 respuestas correctas",       "cond": lambda s: s["max_racha"] >= 20},
+    {"id": "xp_500",         "emoji": "⭐", "nombre": "Estrella",        "desc": "Acumular 500 XP en total",               "cond": lambda s: s["xp_total"] >= 500},
+    {"id": "xp_2000",        "emoji": "🌟", "nombre": "Superestrella",   "desc": "Acumular 2000 XP en total",              "cond": lambda s: s["xp_total"] >= 2000},
+    {"id": "xp_10000",       "emoji": "💎", "nombre": "Diamante",        "desc": "Acumular 10000 XP en total",             "cond": lambda s: s["xp_total"] >= 10000},
+    {"id": "mult_x4",        "emoji": "🚀", "nombre": "Cohete",          "desc": "Alcanzar multiplicador x4",              "cond": lambda s: s["max_multiplicador"] >= 4},
+    {"id": "100_respuestas", "emoji": "📚", "nombre": "Estudioso",       "desc": "Responder 100 preguntas en total",       "cond": lambda s: s["total_respuestas"] >= 100},
+    {"id": "500_respuestas", "emoji": "🏆", "nombre": "Campeón",         "desc": "Responder 500 preguntas en total",       "cond": lambda s: s["total_respuestas"] >= 500},
+    {"id": "90_pct",         "emoji": "🎯", "nombre": "Certero",         "desc": "Sesión con 90%+ de efectividad",         "cond": lambda s: s["mejor_pct"] >= 90},
+    {"id": "100_pct",        "emoji": "👑", "nombre": "Perfecto",        "desc": "Sesión con 100% de efectividad",         "cond": lambda s: s["mejor_pct"] >= 100},
+    {"id": "examen_aprobado","emoji": "📝", "nombre": "Aprobado",        "desc": "Aprobar un examen con 70%+",             "cond": lambda s: s.get("mejor_pct_examen", 0) >= 70},
+    {"id": "examen_honor",   "emoji": "🎓", "nombre": "Cuadro de honor", "desc": "Aprobar un examen con 90%+",             "cond": lambda s: s.get("mejor_pct_examen", 0) >= 90},
+]
+
+
+# ── Fórmula de puntuación balanceada ─────────────────────────
+def calcular_score(xp_total: int, total_respuestas: int, pct: int) -> int:
+    """
+    Score = XP × efectividad_factor × volumen_factor
+    - efectividad_factor: raíz cuadrada del % (penaliza baja efectividad)
+    - volumen_factor: log10 del total de preguntas (premia cantidad sin inflar)
+    Ejemplo: 163k XP, 1017 preguntas, 67% → score ≈ 163000 × 0.818 × 3.007 ≈ 401k
+             163k XP,  771 preguntas, 65% → score ≈ 163000 × 0.806 × 2.887 ≈ 379k
+    → Jaikel siempre por encima de Tyler con esos datos.
+    """
+    if total_respuestas == 0:
+        return 0
+    ef = math.sqrt(max(pct, 1) / 100)
+    vol = math.log10(total_respuestas + 1)
+    return int(xp_total * ef * vol)
+
+
+# ── Google Sheets ─────────────────────────────────────────────
 def _get_sheet():
     import streamlit as st
     import gspread
@@ -17,101 +71,131 @@ def _get_sheet():
     return client.open_by_key(st.secrets["SHEET_ID"]).sheet1
 
 
-def _load():
-    """Carga todos los datos desde Google Sheets (celda A1 como JSON)."""
+def _load_local() -> dict:
+    if not os.path.exists(_LOCAL_FILE):
+        return {}
+    try:
+        with open(_LOCAL_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_local(data: dict):
+    try:
+        with open(_LOCAL_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _load() -> dict:
+    global _cache, _cache_ts
+    now = time.time()
+    if _cache and (now - _cache_ts) < _CACHE_TTL:
+        return _cache
     try:
         sheet = _get_sheet()
         val = sheet.acell("A1").value
-        if val:
-            return json.loads(val)
+        data = json.loads(val) if val else {}
+        _cache = data
+        _cache_ts = now
+        # Sincronizar fallback local
+        _save_local(data)
+        return data
     except Exception:
-        pass
-    return {}
+        # Fallback a JSON local
+        data = _load_local()
+        _cache = data
+        _cache_ts = now
+        return data
 
 
-def _save(data):
-    """Guarda todos los datos en Google Sheets (celda A1 como JSON)."""
+def _save(data: dict):
+    global _cache, _cache_ts
+    _cache = data
+    _cache_ts = time.time()
+    _save_local(data)  # siempre guardar local
     try:
         sheet = _get_sheet()
         sheet.update("A1", [[json.dumps(data, ensure_ascii=False)]])
     except Exception:
-        pass
+        pass  # ya guardó local, no es crítico
 
 
-DIFICULTADES_ORDEN = ["Facil", "Normal", "Dificil", "Super Dificil", "Mega Dificil"]
-MATERIAS_ORDEN = ["Matematicas", "Ciencias", "Estudios Sociales", "Espanol"]
-
-LOGROS = [
-    {"id": "primera_vez",    "emoji": "🐣", "nombre": "Primera vez",   "desc": "Completar tu primera sesion",             "cond": lambda s: s["sesiones"] >= 1},
-    {"id": "racha_5",        "emoji": "🔥", "nombre": "En llamas",      "desc": "Racha de 5 respuestas correctas",         "cond": lambda s: s["max_racha"] >= 5},
-    {"id": "racha_10",       "emoji": "💥", "nombre": "Imparable",      "desc": "Racha de 10 respuestas correctas",        "cond": lambda s: s["max_racha"] >= 10},
-    {"id": "racha_20",       "emoji": "⚡", "nombre": "Rayo",           "desc": "Racha de 20 respuestas correctas",        "cond": lambda s: s["max_racha"] >= 20},
-    {"id": "xp_500",         "emoji": "⭐", "nombre": "Estrella",       "desc": "Acumular 500 XP en total",                "cond": lambda s: s["xp_total"] >= 500},
-    {"id": "xp_2000",        "emoji": "🌟", "nombre": "Superestrella",  "desc": "Acumular 2000 XP en total",               "cond": lambda s: s["xp_total"] >= 2000},
-    {"id": "xp_10000",       "emoji": "💎", "nombre": "Diamante",       "desc": "Acumular 10000 XP en total",              "cond": lambda s: s["xp_total"] >= 10000},
-    {"id": "mult_x4",        "emoji": "🚀", "nombre": "Cohete",         "desc": "Alcanzar multiplicador x4",               "cond": lambda s: s["max_multiplicador"] >= 4},
-    {"id": "100_respuestas", "emoji": "📚", "nombre": "Estudioso",      "desc": "Responder 100 preguntas en total",        "cond": lambda s: s["total_respuestas"] >= 100},
-    {"id": "500_respuestas", "emoji": "🏆", "nombre": "Campeon",        "desc": "Responder 500 preguntas en total",        "cond": lambda s: s["total_respuestas"] >= 500},
-    {"id": "90_pct",         "emoji": "🎯", "nombre": "Certero",        "desc": "Sesion con 90% o mas de efectividad",     "cond": lambda s: s["mejor_pct"] >= 90},
-    {"id": "100_pct",        "emoji": "👑", "nombre": "Perfecto",       "desc": "Sesion con 100% de efectividad",          "cond": lambda s: s["mejor_pct"] >= 100},
-]
+def _invalidate_cache():
+    global _cache_ts
+    _cache_ts = 0.0
 
 
-def _dif_stats_default():
-    return {"xp_total": 0, "sesiones": 0, "total_respuestas": 0,
-            "total_correctas": 0, "mejor_sesion_xp": 0, "max_racha": 0}
-
-
-def _materia_stats_default():
-    return {"xp_total": 0, "sesiones": 0, "total_respuestas": 0,
-            "total_correctas": 0, "mejor_sesion_xp": 0, "max_racha": 0}
-
-
-def get_player(nombre):
-    data = _load()
-    if nombre not in data:
-        data[nombre] = {
-            "xp_total": 0,
-            "sesiones": 0,
-            "total_respuestas": 0,
-            "total_correctas": 0,
-            "max_racha": 0,
-            "max_multiplicador": 1,
+# ── Estructura de jugador ─────────────────────────────────────
+def _player_default() -> dict:
+    return {
+        "xp_total": 0,
+        "sesiones": 0,
+        "total_respuestas": 0,
+        "total_correctas": 0,
+        "max_racha": 0,
+        "max_multiplicador": 1,
+        "mejor_pct": 0,
+        "mejor_sesion_xp": 0,
+        "logros": [],
+        "historial": [],
+        "por_dificultad": {},
+        "por_materia": {},
+        "temas_stats": {},
+        "preguntas_debiles": [],
+        # Separación Infinito / Examen
+        "infinito": {
+            "xp_total": 0, "sesiones": 0,
+            "total_respuestas": 0, "total_correctas": 0,
+            "max_racha": 0, "mejor_sesion_xp": 0,
+        },
+        "examen": {
+            "xp_total": 0, "sesiones": 0,
+            "total_respuestas": 0, "total_correctas": 0,
+            "max_racha": 0, "mejor_sesion_xp": 0,
             "mejor_pct": 0,
-            "mejor_sesion_xp": 0,
-            "logros": [],
-            "historial": [],
-            "por_dificultad": {},
-            "por_materia": {},
-            "temas_stats": {},
-            "preguntas_debiles": [],
-        }
-        _save(data)
-    return data[nombre]
+        },
+        "mejor_pct_examen": 0,
+    }
 
 
-def save_session(nombre, score, materia, temas, dificultad="Normal",
-                 preguntas_fallidas=None, topic_stats_sesion=None):
-    """Guarda una sesion terminada y actualiza stats en Google Sheets."""
+def _migrate(p: dict) -> dict:
+    """Agrega campos nuevos a jugadores existentes sin romper datos."""
+    defaults = _player_default()
+    for campo, val in defaults.items():
+        if campo not in p:
+            p[campo] = val
+    return p
+
+
+# ── API pública ───────────────────────────────────────────────
+def get_player(nombre: str) -> dict:
     data = _load()
     if nombre not in data:
-        get_player(nombre)
-        data = _load()
+        data[nombre] = _player_default()
+        _save(data)
+    return _migrate(data[nombre])
 
-    p = data[nombre]
 
-    # Migrar jugadores sin campos nuevos
-    for campo, default in [("por_dificultad", {}), ("por_materia", {}),
-                            ("temas_stats", {}), ("preguntas_debiles", [])]:
-        if campo not in p:
-            p[campo] = default
+def save_session(nombre: str, score: dict, materia: str, temas,
+                 dificultad: str = "Normal", modo: str = "infinito",
+                 preguntas_fallidas=None, topic_stats_sesion=None) -> list:
+    """
+    Guarda sesión. modo = 'infinito' | 'examen'
+    """
+    data = _load()
+    if nombre not in data:
+        data[nombre] = _player_default()
+    p = _migrate(data[nombre])
 
     total = score["total"]
     correctas = score["correct"]
     pct = int(100 * correctas / total) if total > 0 else 0
     nuevos_logros = []
 
-    # Stats globales
+    # ── Stats globales ──
     p["xp_total"] += score["xp"]
     p["sesiones"] += 1
     p["total_respuestas"] += total
@@ -121,9 +205,24 @@ def save_session(nombre, score, materia, temas, dificultad="Normal",
     p["mejor_pct"] = max(p["mejor_pct"], pct)
     p["mejor_sesion_xp"] = max(p["mejor_sesion_xp"], score["xp"])
 
-    # Stats por dificultad
+    # ── Stats por modo (infinito / examen) ──
+    m_key = "examen" if modo == "examen" else "infinito"
+    ms = p[m_key]
+    ms["xp_total"] += score["xp"]
+    ms["sesiones"] += 1
+    ms["total_respuestas"] += total
+    ms["total_correctas"] += correctas
+    ms["max_racha"] = max(ms["max_racha"], score["max_streak"])
+    ms["mejor_sesion_xp"] = max(ms["mejor_sesion_xp"], score["xp"])
+    if modo == "examen":
+        ms["mejor_pct"] = max(ms.get("mejor_pct", 0), pct)
+        p["mejor_pct_examen"] = max(p.get("mejor_pct_examen", 0), pct)
+
+    # ── Stats por dificultad ──
     if dificultad not in p["por_dificultad"]:
-        p["por_dificultad"][dificultad] = _dif_stats_default()
+        p["por_dificultad"][dificultad] = {
+            "xp_total": 0, "sesiones": 0, "total_respuestas": 0,
+            "total_correctas": 0, "mejor_sesion_xp": 0, "max_racha": 0}
     d = p["por_dificultad"][dificultad]
     d["xp_total"] += score["xp"]
     d["sesiones"] += 1
@@ -132,38 +231,39 @@ def save_session(nombre, score, materia, temas, dificultad="Normal",
     d["mejor_sesion_xp"] = max(d["mejor_sesion_xp"], score["xp"])
     d["max_racha"] = max(d["max_racha"], score["max_streak"])
 
-    # Stats por materia
+    # ── Stats por materia ──
     if materia not in p["por_materia"]:
-        p["por_materia"][materia] = _materia_stats_default()
-    m = p["por_materia"][materia]
-    m["xp_total"] += score["xp"]
-    m["sesiones"] += 1
-    m["total_respuestas"] += total
-    m["total_correctas"] += correctas
-    m["mejor_sesion_xp"] = max(m["mejor_sesion_xp"], score["xp"])
-    m["max_racha"] = max(m["max_racha"], score["max_streak"])
+        p["por_materia"][materia] = {
+            "xp_total": 0, "sesiones": 0, "total_respuestas": 0,
+            "total_correctas": 0, "mejor_sesion_xp": 0, "max_racha": 0}
+    mat = p["por_materia"][materia]
+    mat["xp_total"] += score["xp"]
+    mat["sesiones"] += 1
+    mat["total_respuestas"] += total
+    mat["total_correctas"] += correctas
+    mat["mejor_sesion_xp"] = max(mat["mejor_sesion_xp"], score["xp"])
+    mat["max_racha"] = max(mat["max_racha"], score["max_streak"])
 
-    # Precision por tema
+    # ── Stats por tema ──
     if topic_stats_sesion:
         for clave, ts in topic_stats_sesion.items():
             if clave not in p["temas_stats"]:
                 p["temas_stats"][clave] = {
                     "materia": ts["materia"], "topic": ts["topic"],
-                    "intentos": 0, "correctas": 0,
-                }
+                    "intentos": 0, "correctas": 0}
             p["temas_stats"][clave]["intentos"] += ts["intentos"]
             p["temas_stats"][clave]["correctas"] += ts["correctas"]
 
-    # Preguntas fallidas (ultimas 50)
+    # ── Preguntas débiles ──
     if preguntas_fallidas:
         p["preguntas_debiles"].extend(preguntas_fallidas)
         p["preguntas_debiles"] = p["preguntas_debiles"][-50:]
 
-    # Historial (ultimas 20 sesiones)
+    # ── Historial ──
     p["historial"].append({
         "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "materia": materia,
-        "temas": temas,
+        "modo": modo,
         "dificultad": dificultad,
         "xp": score["xp"],
         "correctas": correctas,
@@ -174,7 +274,7 @@ def save_session(nombre, score, materia, temas, dificultad="Normal",
     })
     p["historial"] = p["historial"][-20:]
 
-    # Logros
+    # ── Logros ──
     for logro in LOGROS:
         if logro["id"] not in p["logros"] and logro["cond"](p):
             p["logros"].append(logro["id"])
@@ -185,97 +285,120 @@ def save_session(nombre, score, materia, temas, dificultad="Normal",
     return nuevos_logros
 
 
-def get_all_players():
-    return _load()
+def _build_entry(nombre: str, stats: dict, modo: str = "global") -> dict:
+    """Construye entrada de ranking con score balanceado."""
+    if modo == "infinito":
+        s = stats.get("infinito", {})
+        tr = s.get("total_respuestas", 0)
+        tc = s.get("total_correctas", 0)
+        xp = s.get("xp_total", 0)
+    elif modo == "examen":
+        s = stats.get("examen", {})
+        tr = s.get("total_respuestas", 0)
+        tc = s.get("total_correctas", 0)
+        xp = s.get("xp_total", 0)
+    else:
+        tr = stats.get("total_respuestas", 0)
+        tc = stats.get("total_correctas", 0)
+        xp = stats.get("xp_total", 0)
+        s = stats
+
+    pct = int(100 * tc / tr) if tr > 0 else 0
+    score = calcular_score(xp, tr, pct)
+
+    return {
+        "nombre": nombre,
+        "xp_total": xp,
+        "score": score,
+        "sesiones": s.get("sesiones", stats.get("sesiones", 0)),
+        "total_respuestas": tr,
+        "total_correctas": tc,
+        "pct": pct,
+        "max_racha": s.get("max_racha", stats.get("max_racha", 0)),
+        "max_multiplicador": stats.get("max_multiplicador", 1),
+        "mejor_sesion_xp": s.get("mejor_sesion_xp", stats.get("mejor_sesion_xp", 0)),
+        "logros": stats.get("logros", []),
+        "mejor_pct_examen": stats.get("mejor_pct_examen", 0),
+    }
 
 
-def get_ranking():
-    """Ranking global por XP total."""
+def get_ranking(modo: str = "global") -> list:
+    data = _load()
+    ranking = [_build_entry(n, _migrate(s), modo) for n, s in data.items()
+               if _migrate(s).get("total_respuestas", 0) > 0]
+    return sorted(ranking, key=lambda x: x["score"], reverse=True)
+
+
+def get_ranking_materia(materia: str) -> list:
     data = _load()
     ranking = []
     for nombre, stats in data.items():
-        pct = int(100 * stats["total_correctas"] / stats["total_respuestas"]) if stats["total_respuestas"] > 0 else 0
-        ranking.append({
-            "nombre": nombre,
-            "xp_total": stats["xp_total"],
-            "sesiones": stats["sesiones"],
-            "total_respuestas": stats["total_respuestas"],
-            "total_correctas": stats["total_correctas"],
-            "pct": pct,
-            "max_racha": stats["max_racha"],
-            "max_multiplicador": stats["max_multiplicador"],
-            "mejor_sesion_xp": stats["mejor_sesion_xp"],
-            "logros": stats["logros"],
-        })
-    return sorted(ranking, key=lambda x: x["xp_total"], reverse=True)
-
-
-def get_ranking_materia(materia):
-    """Ranking por XP en una materia especifica."""
-    data = _load()
-    ranking = []
-    for nombre, stats in data.items():
-        m = stats.get("por_materia", {}).get(materia)
-        if not m or m["sesiones"] == 0:
+        m = _migrate(stats).get("por_materia", {}).get(materia)
+        if not m or m.get("sesiones", 0) == 0:
             continue
-        pct = int(100 * m["total_correctas"] / m["total_respuestas"]) if m["total_respuestas"] > 0 else 0
+        tr = m["total_respuestas"]
+        tc = m["total_correctas"]
+        pct = int(100 * tc / tr) if tr > 0 else 0
         ranking.append({
             "nombre": nombre,
             "xp_total": m["xp_total"],
+            "score": calcular_score(m["xp_total"], tr, pct),
             "sesiones": m["sesiones"],
-            "total_respuestas": m["total_respuestas"],
+            "total_respuestas": tr,
             "pct": pct,
             "max_racha": m["max_racha"],
             "mejor_sesion_xp": m["mejor_sesion_xp"],
-            "logros": stats["logros"],
+            "logros": stats.get("logros", []),
         })
-    return sorted(ranking, key=lambda x: x["xp_total"], reverse=True)
+    return sorted(ranking, key=lambda x: x["score"], reverse=True)
 
 
-def get_temas_stats(nombre):
-    """Precision por tema de un estudiante."""
-    data = _load()
-    return data.get(nombre, {}).get("temas_stats", {})
-
-
-def get_preguntas_debiles(nombre):
-    """Preguntas fallidas recientes de un estudiante."""
-    data = _load()
-    return data.get(nombre, {}).get("preguntas_debiles", [])
-
-
-def get_ranking_dificultad(dificultad):
-    """Ranking por XP en una dificultad especifica."""
+def get_ranking_dificultad(dificultad: str) -> list:
     data = _load()
     ranking = []
     for nombre, stats in data.items():
-        d = stats.get("por_dificultad", {}).get(dificultad)
-        if not d or d["sesiones"] == 0:
+        d = _migrate(stats).get("por_dificultad", {}).get(dificultad)
+        if not d or d.get("sesiones", 0) == 0:
             continue
-        pct = int(100 * d["total_correctas"] / d["total_respuestas"]) if d["total_respuestas"] > 0 else 0
+        tr = d["total_respuestas"]
+        tc = d["total_correctas"]
+        pct = int(100 * tc / tr) if tr > 0 else 0
         ranking.append({
             "nombre": nombre,
             "xp_total": d["xp_total"],
+            "score": calcular_score(d["xp_total"], tr, pct),
             "sesiones": d["sesiones"],
-            "total_respuestas": d["total_respuestas"],
+            "total_respuestas": tr,
             "pct": pct,
             "max_racha": d["max_racha"],
             "mejor_sesion_xp": d["mejor_sesion_xp"],
-            "logros": stats["logros"],
+            "logros": stats.get("logros", []),
         })
-    return sorted(ranking, key=lambda x: x["xp_total"], reverse=True)
+    return sorted(ranking, key=lambda x: x["score"], reverse=True)
 
 
-def add_correction_xp(nombre, xp_extra, materia):
-    """Agrega XP de la ronda de correccion sin contar como sesion nueva."""
+def get_all_players() -> dict:
+    return _load()
+
+
+def get_temas_stats(nombre: str) -> dict:
+    return _load().get(nombre, {}).get("temas_stats", {})
+
+
+def get_preguntas_debiles(nombre: str) -> list:
+    return _load().get(nombre, {}).get("preguntas_debiles", [])
+
+
+def add_correction_xp(nombre: str, xp_extra: int, materia: str):
     if xp_extra <= 0:
         return
     data = _load()
     if nombre not in data:
         return
-    p = data[nombre]
+    p = _migrate(data[nombre])
     p["xp_total"] += xp_extra
     p["mejor_sesion_xp"] = max(p.get("mejor_sesion_xp", 0), xp_extra)
+    p["examen"]["xp_total"] += xp_extra
     if materia in p.get("por_materia", {}):
         p["por_materia"][materia]["xp_total"] += xp_extra
     data[nombre] = p
