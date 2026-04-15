@@ -61,6 +61,20 @@ def render_exam(lang="es"):
     # Recuperar respuestas guardadas si venimos de un resume
     respuestas_previas = st.session_state.pop('exam_respuestas_guardadas', {})
 
+    # Pre-popular session_state con las respuestas guardadas ANTES de renderizar
+    # los widgets. En Streamlit, si el key ya existe en session_state, el parámetro
+    # index es ignorado; esta es la forma correcta de restaurar selecciones.
+    if respuestas_previas:
+        for idx_pre, q_pre in enumerate(preguntas):
+            prev = respuestas_previas.get(str(idx_pre))
+            if prev:
+                key_pre = f"exam_radio_{idx_pre}"
+                if key_pre not in st.session_state:
+                    opts_pre = q_pre.get('opciones_btn', [])
+                    labeled_pre = [f"{LETRAS[j]})  {opts_pre[j]}" for j in range(len(opts_pre))]
+                    if prev in labeled_pre:
+                        st.session_state[key_pre] = prev
+
     respuestas = {}
     with st.form("exam_form"):
         for i, q in enumerate(preguntas):
@@ -91,14 +105,8 @@ def render_exam(lang="es"):
                     font-size:0.95rem; font-style:italic; color:#333;">{q['texto_comparar']}</div>""",
                     unsafe_allow_html=True)
 
-            # Preseleccionar respuesta guardada si existe
-            prev_resp = respuestas_previas.get(str(i))
-            prev_idx = None
-            if prev_resp and prev_resp in opciones_labeled:
-                prev_idx = opciones_labeled.index(prev_resp)
-
             respuestas[i] = st.radio(label=f"q{i}", options=opciones_labeled,
-                                     index=prev_idx,
+                                     index=None,
                                      key=f"exam_radio_{i}", label_visibility="collapsed")
             st.write("")
 
