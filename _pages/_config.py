@@ -119,6 +119,7 @@ def _config_examen(mat_info, topics):
                 st.session_state.exam_session_saved = False
                 st.session_state.dificultad = "Difícil"
                 st.session_state.current_topics = topics
+                st.session_state.exam_resume_checked = False
                 st.session_state.phase = 'exam'
                 del st.session_state.config_mode
                 st.rerun()
