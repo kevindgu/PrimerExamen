@@ -61,20 +61,21 @@ def render_exam(lang="es"):
     # Recuperar respuestas guardadas si venimos de un resume
     respuestas_previas = st.session_state.pop('exam_respuestas_guardadas', {})
 
-    # Pre-popular session_state con las respuestas guardadas ANTES de renderizar
-    # los widgets. En Streamlit el parámetro index es ignorado si el key ya existe
-    # en session_state, así que hay que limpiar los keys primero y luego setear.
+    # En Streamlit, setear session_state y renderizar el widget en el MISMO
+    # script-run puede ser ignorado por los widgets de un form. La solución es
+    # separar en dos fases: (1) setear session_state + rerun, (2) renderizar form.
     if respuestas_previas:
         for idx_pre, q_pre in enumerate(preguntas):
             key_pre = f"exam_radio_{idx_pre}"
             prev = respuestas_previas.get(str(idx_pre))
-            # Limpiar key stale para que el valor guardado siempre tenga prioridad
             st.session_state.pop(key_pre, None)
             if prev:
                 opts_pre = q_pre.get('opciones_btn', [])
                 labeled_pre = [f"{LETRAS[j]})  {opts_pre[j]}" for j in range(len(opts_pre))]
                 if prev in labeled_pre:
                     st.session_state[key_pre] = prev
+        # Rerun para que el form encuentre los valores ya establecidos en session_state
+        st.rerun()
 
     respuestas = {}
     with st.form("exam_form"):
