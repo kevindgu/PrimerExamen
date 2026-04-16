@@ -11,6 +11,7 @@ import os
 import math
 import time
 from datetime import datetime
+import streamlit as st
 
 # ── Fallback local ────────────────────────────────────────────
 _LOCAL_FILE       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scores_local.json")
@@ -562,9 +563,16 @@ def add_correction_xp(nombre: str, xp_extra: int, materia: str):
 
 
 # ── Examen en progreso ────────────────────────────────────────
+# st.cache_resource crea un singleton compartido que sobrevive F5 y
+# cambios de sesión mientras el servidor siga corriendo.
+@st.cache_resource
+def _get_exam_store() -> dict:
+    """Almacén en memoria para exámenes en progreso. Sobrevive F5."""
+    return {}
+
 
 def save_exam_progress(nombre: str, materia: str, preguntas: list, respuestas: dict):
-    """Guarda el estado actual del examen en la hoja 'examenes'."""
+    """Guarda el examen en el store en memoria y en la hoja 'examenes'."""
     exam_dict = {
         "materia": materia,
         "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -573,14 +581,23 @@ def save_exam_progress(nombre: str, materia: str, preguntas: list, respuestas: d
         "total": len(preguntas),
         "respondidas": sum(1 for v in respuestas.values() if v is not None),
     }
+    # Primario: memoria compartida (inmediato, sobrevive F5)
+    _get_exam_store()[nombre] = exam_dict
+    # Respaldo: Google Sheets (persiste si el servidor se reinicia)
     _persist_exam(nombre, exam_dict)
 
 
 def get_exam_progress(nombre: str) -> dict | None:
     """Retorna el examen en progreso si existe, None si no."""
+    # 1) Memoria compartida (más rápido y confiable)
+    stored = _get_exam_store().get(nombre)
+    if stored:
+        return stored
+    # 2) Google Sheets (fallback si el servidor se reinició)
     return _load_exams().get(nombre)
 
 
 def clear_exam_progress(nombre: str):
     """Borra el examen en progreso al entregar o cancelar."""
+    _get_exam_store().pop(nombre, None)
     _remove_exam(nombre)
