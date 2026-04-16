@@ -1,10 +1,10 @@
 """
 Sistema de tabla de puntuaciones.
-- Almacenamiento primario: Google Sheets
-- Fallback automático: JSON local (scores_local.json)
+- Almacenamiento primario: Google Sheets (múltiples hojas)
+    · "datos"   → una fila por estudiante: [nombre, JSON_stats]
+    · "examenes"→ una fila por estudiante: [nombre, JSON_examen_en_progreso]
+- Fallback automático: JSON local (scores_local.json / examenes_local.json)
 - Caché en memoria para evitar llamadas repetidas
-- Fórmula de puntuación balanceada
-- Separación Modo Infinito / Modo Examen
 """
 import json
 import os
@@ -13,12 +13,18 @@ import time
 from datetime import datetime
 
 # ── Fallback local ────────────────────────────────────────────
-_LOCAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scores_local.json")
+_LOCAL_FILE       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scores_local.json")
+_LOCAL_EXAMS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "examenes_local.json")
 
 # ── Caché en memoria ──────────────────────────────────────────
-_cache: dict = {}
-_cache_ts: float = 0.0
-_CACHE_TTL = 30  # segundos antes de refrescar desde Sheets
+_cache:      dict  = {}
+_cache_ts:   float = 0.0
+_exam_cache: dict  = {}
+_exam_cache_ts: float = 0.0
+_CACHE_TTL = 30  # segundos
+
+# Conexión reutilizable a Google Sheets
+_spreadsheet = None
 
 DIFICULTADES_ORDEN = ["Fácil", "Normal", "Difícil", "💀 Super Difícil", "☠️ Mega Difícil"]
 MATERIAS_ORDEN = ["Matemáticas", "Ciencias", "Estudios Sociales", "Español"]
@@ -43,14 +49,6 @@ LOGROS = [
 
 # ── Fórmula de puntuación balanceada ─────────────────────────
 def calcular_score(xp_total: int, total_respuestas: int, pct: int) -> int:
-    """
-    Score = XP × efectividad_factor × volumen_factor
-    - efectividad_factor: raíz cuadrada del % (penaliza baja efectividad)
-    - volumen_factor: log10 del total de preguntas (premia cantidad sin inflar)
-    Ejemplo: 163k XP, 1017 preguntas, 67% → score ≈ 163000 × 0.818 × 3.007 ≈ 401k
-             163k XP,  771 preguntas, 65% → score ≈ 163000 × 0.806 × 2.887 ≈ 379k
-    → Jaikel siempre por encima de Tyler con esos datos.
-    """
     if total_respuestas == 0:
         return 0
     ef = math.sqrt(max(pct, 1) / 100)
@@ -59,7 +57,11 @@ def calcular_score(xp_total: int, total_respuestas: int, pct: int) -> int:
 
 
 # ── Google Sheets ─────────────────────────────────────────────
-def _get_sheet():
+
+def _get_spreadsheet():
+    global _spreadsheet
+    if _spreadsheet is not None:
+        return _spreadsheet
     import streamlit as st
     import gspread
     from google.oauth2.service_account import Credentials
@@ -68,8 +70,111 @@ def _get_sheet():
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
     client = gspread.authorize(creds)
-    return client.open_by_key(st.secrets["SHEET_ID"]).sheet1
+    _spreadsheet = client.open_by_key(st.secrets["SHEET_ID"])
+    return _spreadsheet
 
+
+def _get_or_create_ws(title, rows=200, cols=2):
+    """Retorna la hoja con ese título, creándola si no existe."""
+    ss = _get_spreadsheet()
+    try:
+        return ss.worksheet(title)
+    except Exception:
+        return ss.add_worksheet(title=title, rows=rows, cols=cols)
+
+
+def _ws_read_all(ws_title) -> dict:
+    """Lee {nombre: dict} de una hoja. Col A = nombre, Col B = JSON."""
+    ws = _get_or_create_ws(ws_title)
+    rows = ws.get_all_values()
+    result = {}
+    for row in rows:
+        if len(row) >= 2 and row[0] and row[1]:
+            try:
+                result[row[0]] = json.loads(row[1])
+            except Exception:
+                pass
+    return result
+
+
+def _ws_write_all(ws_title, data: dict):
+    """Reescribe toda la hoja con los datos de 'data'. Una fila por estudiante."""
+    ws = _get_or_create_ws(ws_title)
+    ws.clear()
+    rows = [[nombre, json.dumps(val, ensure_ascii=False)]
+            for nombre, val in data.items()]
+    if rows:
+        ws.update(rows, value_input_option='RAW')
+
+
+def _ws_upsert(ws_title, nombre, val):
+    """Actualiza la fila del estudiante, o la inserta si no existe."""
+    ws = _get_or_create_ws(ws_title)
+    json_str = json.dumps(val, ensure_ascii=False)
+    try:
+        cell = ws.find(nombre, in_column=1)
+        ws.update_cell(cell.row, 2, json_str)
+    except Exception:
+        ws.append_row([nombre, json_str], value_input_option='RAW')
+
+
+def _ws_delete_row(ws_title, nombre):
+    """Elimina la fila del estudiante de la hoja."""
+    try:
+        ws = _get_or_create_ws(ws_title)
+        cell = ws.find(nombre, in_column=1)
+        if cell:
+            ws.delete_rows(cell.row)
+    except Exception:
+        pass
+
+
+# ── Migración del formato antiguo (todo en A1) ────────────────
+
+def _migrate_from_sheet1():
+    """
+    Si Sheet1/A1 tiene datos en el formato viejo (un JSON gigante),
+    los migra a las hojas 'datos' y 'examenes' y limpia A1.
+    Solo se ejecuta una vez (detecta si 'datos' ya tiene filas).
+    """
+    try:
+        ss = _get_spreadsheet()
+        # Si 'datos' ya existe y tiene filas → ya se migró
+        try:
+            ws_datos = ss.worksheet("datos")
+            if ws_datos.get_all_values():
+                return
+        except Exception:
+            pass
+
+        # Intentar leer el formato viejo
+        old_sheet = ss.sheet1
+        old_val = old_sheet.acell("A1").value
+        if not old_val:
+            return
+        old_data = json.loads(old_val)
+        if not old_data:
+            return
+
+        exam_data  = {}
+        stats_data = {}
+        for nombre, player in old_data.items():
+            exam = player.pop("examen_en_progreso", None)
+            if exam:
+                exam_data[nombre] = exam
+            stats_data[nombre] = player
+
+        _ws_write_all("datos", stats_data)
+        if exam_data:
+            _ws_write_all("examenes", exam_data)
+
+        # Limpiar A1 del sheet viejo para no migrar dos veces
+        old_sheet.update("A1", [[""]])
+    except Exception:
+        pass
+
+
+# ── Fallback local ─────────────────────────────────────────────
 
 def _load_local() -> dict:
     if not os.path.exists(_LOCAL_FILE):
@@ -89,22 +194,39 @@ def _save_local(data: dict):
         pass
 
 
+def _load_exams_local() -> dict:
+    if not os.path.exists(_LOCAL_EXAMS_FILE):
+        return {}
+    try:
+        with open(_LOCAL_EXAMS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_exams_local(data: dict):
+    try:
+        with open(_LOCAL_EXAMS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# ── Carga / Guardado de stats ──────────────────────────────────
+
 def _load() -> dict:
     global _cache, _cache_ts
     now = time.time()
     if _cache and (now - _cache_ts) < _CACHE_TTL:
         return _cache
     try:
-        sheet = _get_sheet()
-        val = sheet.acell("A1").value
-        data = json.loads(val) if val else {}
+        _migrate_from_sheet1()
+        data = _ws_read_all("datos")
         _cache = data
         _cache_ts = now
-        # Sincronizar fallback local
         _save_local(data)
         return data
     except Exception:
-        # Fallback a JSON local
         data = _load_local()
         _cache = data
         _cache_ts = now
@@ -112,20 +234,65 @@ def _load() -> dict:
 
 
 def _save(data: dict):
+    """Guarda stats de todos los jugadores en la hoja 'datos'."""
     global _cache, _cache_ts
-    _cache = data
+    # Nunca persistir examen_en_progreso en la hoja de stats
+    clean = {n: {k: v for k, v in p.items() if k != "examen_en_progreso"}
+             for n, p in data.items()}
+    _cache = clean
     _cache_ts = time.time()
-    _save_local(data)  # siempre guardar local
+    _save_local(clean)
     try:
-        sheet = _get_sheet()
-        sheet.update("A1", [[json.dumps(data, ensure_ascii=False)]])
+        _ws_write_all("datos", clean)
     except Exception:
-        pass  # ya guardó local, no es crítico
+        pass
 
 
 def _invalidate_cache():
-    global _cache_ts
+    global _cache_ts, _exam_cache_ts
     _cache_ts = 0.0
+    _exam_cache_ts = 0.0
+
+
+# ── Carga / Guardado de exámenes en progreso ───────────────────
+
+def _load_exams() -> dict:
+    global _exam_cache, _exam_cache_ts
+    now = time.time()
+    if _exam_cache and (now - _exam_cache_ts) < _CACHE_TTL:
+        return _exam_cache
+    try:
+        data = _ws_read_all("examenes")
+        _exam_cache = data
+        _exam_cache_ts = now
+        _save_exams_local(data)
+        return data
+    except Exception:
+        data = _load_exams_local()
+        _exam_cache = data
+        _exam_cache_ts = now
+        return data
+
+
+def _persist_exam(nombre: str, exam_dict: dict):
+    global _exam_cache, _exam_cache_ts
+    _exam_cache[nombre] = exam_dict
+    _exam_cache_ts = time.time()
+    _save_exams_local(_exam_cache)
+    try:
+        _ws_upsert("examenes", nombre, exam_dict)
+    except Exception:
+        pass
+
+
+def _remove_exam(nombre: str):
+    global _exam_cache
+    _exam_cache.pop(nombre, None)
+    _save_exams_local(_exam_cache)
+    try:
+        _ws_delete_row("examenes", nombre)
+    except Exception:
+        pass
 
 
 # ── Estructura de jugador ─────────────────────────────────────
@@ -145,7 +312,6 @@ def _player_default() -> dict:
         "por_materia": {},
         "temas_stats": {},
         "preguntas_debiles": [],
-        # Separación Infinito / Examen
         "infinito": {
             "xp_total": 0, "sesiones": 0,
             "total_respuestas": 0, "total_correctas": 0,
@@ -182,9 +348,7 @@ def get_player(nombre: str) -> dict:
 def save_session(nombre: str, score: dict, materia: str, temas,
                  dificultad: str = "Normal", modo: str = "infinito",
                  preguntas_fallidas=None, topic_stats_sesion=None) -> list:
-    """
-    Guarda sesión. modo = 'infinito' | 'examen'
-    """
+    """Guarda sesión. modo = 'infinito' | 'examen'"""
     data = _load()
     if nombre not in data:
         data[nombre] = _player_default()
@@ -195,7 +359,6 @@ def save_session(nombre: str, score: dict, materia: str, temas,
     pct = int(100 * correctas / total) if total > 0 else 0
     nuevos_logros = []
 
-    # ── Stats globales ──
     p["xp_total"] += score["xp"]
     p["sesiones"] += 1
     p["total_respuestas"] += total
@@ -205,7 +368,6 @@ def save_session(nombre: str, score: dict, materia: str, temas,
     p["mejor_pct"] = max(p["mejor_pct"], pct)
     p["mejor_sesion_xp"] = max(p["mejor_sesion_xp"], score["xp"])
 
-    # ── Stats por modo (infinito / examen) ──
     m_key = "examen" if modo == "examen" else "infinito"
     ms = p[m_key]
     ms["xp_total"] += score["xp"]
@@ -218,7 +380,6 @@ def save_session(nombre: str, score: dict, materia: str, temas,
         ms["mejor_pct"] = max(ms.get("mejor_pct", 0), pct)
         p["mejor_pct_examen"] = max(p.get("mejor_pct_examen", 0), pct)
 
-    # ── Stats por dificultad ──
     if dificultad not in p["por_dificultad"]:
         p["por_dificultad"][dificultad] = {
             "xp_total": 0, "sesiones": 0, "total_respuestas": 0,
@@ -231,7 +392,6 @@ def save_session(nombre: str, score: dict, materia: str, temas,
     d["mejor_sesion_xp"] = max(d["mejor_sesion_xp"], score["xp"])
     d["max_racha"] = max(d["max_racha"], score["max_streak"])
 
-    # ── Stats por materia ──
     if materia not in p["por_materia"]:
         p["por_materia"][materia] = {
             "xp_total": 0, "sesiones": 0, "total_respuestas": 0,
@@ -244,7 +404,6 @@ def save_session(nombre: str, score: dict, materia: str, temas,
     mat["mejor_sesion_xp"] = max(mat["mejor_sesion_xp"], score["xp"])
     mat["max_racha"] = max(mat["max_racha"], score["max_streak"])
 
-    # ── Stats por tema ──
     if topic_stats_sesion:
         for clave, ts in topic_stats_sesion.items():
             if clave not in p["temas_stats"]:
@@ -254,12 +413,10 @@ def save_session(nombre: str, score: dict, materia: str, temas,
             p["temas_stats"][clave]["intentos"] += ts["intentos"]
             p["temas_stats"][clave]["correctas"] += ts["correctas"]
 
-    # ── Preguntas débiles ──
     if preguntas_fallidas:
         p["preguntas_debiles"].extend(preguntas_fallidas)
         p["preguntas_debiles"] = p["preguntas_debiles"][-50:]
 
-    # ── Historial ──
     p["historial"].append({
         "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "materia": materia,
@@ -274,7 +431,6 @@ def save_session(nombre: str, score: dict, materia: str, temas,
     })
     p["historial"] = p["historial"][-20:]
 
-    # ── Logros ──
     for logro in LOGROS:
         if logro["id"] not in p["logros"] and logro["cond"](p):
             p["logros"].append(logro["id"])
@@ -286,7 +442,6 @@ def save_session(nombre: str, score: dict, materia: str, temas,
 
 
 def _build_entry(nombre: str, stats: dict, modo: str = "global") -> dict:
-    """Construye entrada de ranking con score balanceado."""
     if modo == "infinito":
         s = stats.get("infinito", {})
         tr = s.get("total_respuestas", 0)
@@ -408,12 +563,8 @@ def add_correction_xp(nombre: str, xp_extra: int, materia: str):
 # ── Examen en progreso ────────────────────────────────────────
 
 def save_exam_progress(nombre: str, materia: str, preguntas: list, respuestas: dict):
-    """Guarda el estado actual del examen para poder retomarlo."""
-    data = _load()
-    if nombre not in data:
-        data[nombre] = _player_default()
-    p = _migrate(data[nombre])
-    p["examen_en_progreso"] = {
+    """Guarda el estado actual del examen en la hoja 'examenes'."""
+    exam_dict = {
         "materia": materia,
         "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "preguntas": preguntas,
@@ -421,19 +572,14 @@ def save_exam_progress(nombre: str, materia: str, preguntas: list, respuestas: d
         "total": len(preguntas),
         "respondidas": sum(1 for v in respuestas.values() if v is not None),
     }
-    data[nombre] = p
-    _save(data)
+    _persist_exam(nombre, exam_dict)
 
 
 def get_exam_progress(nombre: str) -> dict | None:
     """Retorna el examen en progreso si existe, None si no."""
-    data = _load()
-    return data.get(nombre, {}).get("examen_en_progreso")
+    return _load_exams().get(nombre)
 
 
 def clear_exam_progress(nombre: str):
     """Borra el examen en progreso al entregar o cancelar."""
-    data = _load()
-    if nombre in data and "examen_en_progreso" in data[nombre]:
-        del data[nombre]["examen_en_progreso"]
-        _save(data)
+    _remove_exam(nombre)
