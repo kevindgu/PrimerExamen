@@ -104,7 +104,8 @@ def _ws_write_all(ws_title, data: dict):
     rows = [[nombre, json.dumps(val, ensure_ascii=False)]
             for nombre, val in data.items()]
     if rows:
-        ws.update(rows, value_input_option='RAW')
+        # "A1" es obligatorio como primer argumento en gspread 5.x y 6.x
+        ws.update("A1", rows, value_input_option='RAW')
 
 
 def _ws_upsert(ws_title, nombre, val):
